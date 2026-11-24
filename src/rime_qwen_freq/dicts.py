@@ -19,6 +19,7 @@ import shutil
 import struct
 import subprocess
 import tarfile
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
@@ -34,6 +35,7 @@ SPECIAL_SKIP_KEYWORDS = (
     "symbol",
     "chaizi",
     "liangfen",
+    "custom",
 )
 
 
@@ -387,6 +389,24 @@ def read_uint32_npy(path: Path) -> array.array:
         return arr
 
 
+def read_float16_npy(path: Path) -> list[float]:
+    """Read a 1D little-endian float16 NumPy `.npy` file using only the standard library."""
+    with path.open("rb") as f:
+        magic = f.read(6)
+        if magic != b"\x93NUMPY":
+            raise ValueError(f"Invalid .npy header in {path}")
+        major, _ = struct.unpack("<BB", f.read(2))
+        hlen = struct.unpack("<H" if major == 1 else "<I", f.read(2 if major == 1 else 4))[0]
+        hdr = ast.literal_eval(f.read(hlen).decode("latin1").strip())
+        if hdr.get("descr") not in ("<f2", "float16"):
+            raise ValueError(f"Expected float16 .npy array, got {hdr}")
+        raw = f.read()
+        if struct.pack("<H", 1) != struct.pack("=H", 1):
+            count = len(raw) // 2
+            return list(struct.unpack(f"<{count}e", raw))
+        return [float(x) for x in memoryview(raw).cast("e")]
+
+
 def rewrite_dict_file(filepath: Path, weight_map: dict[str, int], fallback_weight: int) -> tuple[int, int]:
     tmp_path = filepath.with_suffix(filepath.suffix + ".tmp_freq")
     in_body = False
@@ -470,16 +490,13 @@ def apply_scores_archive(
     targets: list[str] | None = None,
     deploy: bool = False,
 ) -> dict:
-    extract_dir = scores_path.parent / "_extracted_rime_scores"
-    extract_dir.mkdir(parents=True, exist_ok=True)
-    try:
+    with tempfile.TemporaryDirectory(prefix="rime_scores_extract_") as tmp_extract:
+        extract_dir = Path(tmp_extract)
         with tarfile.open(scores_path, "r:gz") as tar:
             tar.extractall(extract_dir, filter="data")
         cn_weights = read_uint32_npy(extract_dir / "cn_weights.npy")
         en_weights = read_uint32_npy(extract_dir / "en_weights.npy")
         metrics = json.loads((extract_dir / "metrics.json").read_text(encoding="utf-8"))
-    finally:
-        shutil.rmtree(extract_dir, ignore_errors=True)
 
     with gzip.open(payload_path, "rt", encoding="utf-8") as f:
         payload = json.load(f)
@@ -504,11 +521,14 @@ def apply_scores_archive(
 
     backup_dir.mkdir(parents=True, exist_ok=True)
     updated_summary: list[tuple[str, int, int]] = []
+    rime_root = rime_dir.resolve()
 
     for p in cn_paths + en_paths:
-        rel_safe = p.name
-        bak = backup_dir / rel_safe
+        p_res = p.resolve()
+        rel_sub = p_res.relative_to(rime_root) if p_res.is_relative_to(rime_root) else Path(p.name)
+        bak = backup_dir / rel_sub
         if not bak.exists():
+            bak.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(p, bak)
 
     cn_fallback = int(sorted(cn_weights)[len(cn_weights) // 4]) if cn_weights else 10

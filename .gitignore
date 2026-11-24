@@ -11,6 +11,12 @@ venv/
 *.gz
 *.npy
 *.bin
+*.gram
+.gpuhub/
+gpuhub.py
+bench/rime_bench
+tools/gram_tool
+.rime_bench_last.json
 backup_dicts/
 extracted_scores/
 out/

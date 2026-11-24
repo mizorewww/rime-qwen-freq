@@ -12,6 +12,7 @@ import math
 import os
 import shutil
 import tarfile
+import tempfile
 import time
 from pathlib import Path
 
@@ -65,7 +66,10 @@ def build_prefix_trie(token_seqs: list[list[int]]) -> dict:
     Deduplicate all proper token prefixes across `token_seqs` so shared prefixes are
     evaluated by the transformer only once while preserving exact causal log-probabilities.
     """
-    import numpy as np
+    try:
+        import numpy as np
+    except ImportError:
+        np = None
 
     internal_children: list[dict[int, int]] = [{}]
     node_seq: list[list[int]] = [[]]
@@ -106,8 +110,12 @@ def build_prefix_trie(token_seqs: list[list[int]]) -> dict:
     node_query_eids = [None] * num_internal
     for u, ed in enumerate(edge_dicts):
         if ed:
-            node_query_toks[u] = np.fromiter(ed.keys(), dtype=np.int64, count=len(ed))
-            node_query_eids[u] = np.fromiter(ed.values(), dtype=np.int64, count=len(ed))
+            if np is not None:
+                node_query_toks[u] = np.fromiter(ed.keys(), dtype=np.int64, count=len(ed))
+                node_query_eids[u] = np.fromiter(ed.values(), dtype=np.int64, count=len(ed))
+            else:
+                node_query_toks[u] = list(ed.keys())
+                node_query_eids[u] = list(ed.values())
     del edge_dicts
 
     leaves = [u for u in range(1, num_internal) if not internal_children[u]]
@@ -323,6 +331,55 @@ def verify_trie_exactness(tok, full_model, backbone, lm_head, device: str) -> fl
     return max_err
 
 
+def compute_domain_lift(logp_domain: list[float] | "np.ndarray", logp_general: list[float] | "np.ndarray"):
+    """
+    Compute exact Bayesian Domain Log-Odds Lift (in nats):
+        Delta_domain(w) = log P(w | C_domain) - log P(w | C_general)
+    """
+    try:
+        import numpy as np
+        if isinstance(logp_domain, np.ndarray) and isinstance(logp_general, np.ndarray):
+            return (logp_domain - logp_general).astype(np.float32)
+    except ImportError:
+        pass
+    return [float(d) - float(g) for d, g in zip(logp_domain, logp_general)]
+
+
+def bayesian_domain_log10_tilt(
+    delta_domain: list[float] | "np.ndarray",
+    threshold: float = 1.3,
+    slope: float = 0.135,
+    max_boost: float = 0.54,
+):
+    """
+    Convert Bayesian Domain Log-Odds Lift (nats) into a smooth, bounded log10 weight boost:
+        tilt(w) = clip((Delta_domain(w) - threshold) * slope, 0.0, max_boost)
+    """
+    try:
+        import numpy as np
+        if isinstance(delta_domain, np.ndarray):
+            return np.clip((delta_domain - threshold) * slope, 0.0, max_boost).astype(np.float32)
+    except ImportError:
+        pass
+    return [min(max_boost, max(0.0, (float(d) - threshold) * slope)) for d in delta_domain]
+
+
+def build_single_context_features(words: list[str], token_seqs: list[list[int]], f_gen):
+    """Build calibration feature matrix from a single general context so domain bias never skews anchor fitting."""
+    import numpy as np
+
+    n = len(words)
+    lex = np.empty((n, 6), dtype=np.float32)
+    for i, (w, seq) in enumerate(zip(words, token_seqs)):
+        lex[i, 0] = len(seq)
+        lex[i, 1] = len(w)
+        lex[i, 2] = seq[0]
+        lex[i, 3] = max(seq)
+        lex[i, 4] = sum(seq) / len(seq)
+        lex[i, 5] = 1.0 if (not w.isascii() and any(ord(ch) < 128 for ch in w)) else (2.0 if w.isascii() else 0.0)
+    return np.hstack([f_gen, lex])
+
+
 def build_feature_matrix(words: list[str], token_seqs: list[list[int]], f1, f2):
     import numpy as np
 
@@ -353,21 +410,17 @@ def calibrate_weights(
     anchors: dict[str, int],
     log_space: bool = True,
     default_min: int = 1,
-    default_max: int = 300_000,
+    default_max: int = 350_000,
+    delta_domain: "np.ndarray | None" = None,
+    domain_threshold: float = 1.3,
+    domain_slope: float = 0.135,
+    domain_max_boost: float = 0.54,
 ) -> tuple["np.ndarray", dict]:
     import numpy as np
     from scipy.stats import spearmanr
     from sklearn.ensemble import HistGradientBoostingRegressor
     from sklearn.metrics import mean_absolute_error, r2_score
     from sklearn.model_selection import train_test_split
-
-    if len(anchors) < 50:
-        # Unsupervised rank-based fallback when no empirical anchor table exists
-        raw_score = X[:, 11]  # max mean_lp across contexts
-        z = (raw_score - raw_score.mean()) / max(float(raw_score.std()), 1e-6)
-        log_w = 2.3 + 0.85 * z
-        weights = np.clip(np.rint(np.power(10.0, log_w) - 1.0), default_min, default_max).astype(np.uint32)
-        return weights, {"mode": "unsupervised_prior", "anchor_count": len(anchors)}
 
     word_to_idx = {w: i for i, w in enumerate(words)}
     anchor_idxs, anchor_vals = [], []
@@ -376,6 +429,16 @@ def calibrate_weights(
         if idx is not None and wt > 0:
             anchor_idxs.append(idx)
             anchor_vals.append(wt)
+
+    if len(anchor_idxs) < 50:
+        # Unsupervised rank-based fallback when fewer than 50 valid empirical anchors match
+        raw_score = X[:, 3] if X.shape[1] <= 11 else X[:, 11]  # mean_lp across context(s)
+        z = (raw_score - raw_score.mean()) / max(float(raw_score.std()), 1e-6)
+        log_w = 2.3 + 0.85 * z
+        if delta_domain is not None:
+            log_w = log_w + bayesian_domain_log10_tilt(delta_domain, domain_threshold, domain_slope, domain_max_boost)
+        weights = np.clip(np.rint(np.power(10.0, log_w) - 1.0), default_min, default_max).astype(np.uint32)
+        return weights, {"mode": "unsupervised_prior", "anchor_count": len(anchor_idxs)}
 
     anchor_idxs_np = np.array(anchor_idxs, dtype=np.int64)
     raw_vals_np = np.array(anchor_vals, dtype=np.float64)
@@ -397,7 +460,7 @@ def calibrate_weights(
         X[anchor_idxs_np], y, test_size=0.15, random_state=42
     )
     reg_val = HistGradientBoostingRegressor(
-        max_iter=450, learning_rate=0.05, max_leaf_nodes=63, min_samples_leaf=20, l2_regularization=1.0, random_state=42
+        max_iter=500, learning_rate=0.05, max_leaf_nodes=63, min_samples_leaf=25, l2_regularization=1.0, random_state=42
     )
     reg_val.fit(X_tr, y_tr)
     pred_val = reg_val.predict(X_val)
@@ -406,7 +469,7 @@ def calibrate_weights(
     rho = float(spearmanr(y_val, pred_val).statistic)
 
     reg = HistGradientBoostingRegressor(
-        max_iter=450, learning_rate=0.05, max_leaf_nodes=63, min_samples_leaf=20, l2_regularization=1.0, random_state=42
+        max_iter=500, learning_rate=0.05, max_leaf_nodes=63, min_samples_leaf=25, l2_regularization=1.0, random_state=42
     )
     reg.fit(X[anchor_idxs_np], y)
     anchor_pred = reg.predict(X[anchor_idxs_np])
@@ -419,18 +482,33 @@ def calibrate_weights(
         p = reg.predict(X[s : s + 250_000])
         preds[s : s + 250_000] = mu_y + stretch * (p - mu_p)
 
+    boosted_count = 0
+    if delta_domain is not None:
+        if use_log:
+            tilt = bayesian_domain_log10_tilt(delta_domain, domain_threshold, domain_slope, domain_max_boost)
+            boosted_count = int(np.count_nonzero(tilt > 0))
+            preds = preds + tilt
+        else:
+            span = max(1000.0, float(w_max - w_min))
+            lin_tilt = np.clip((delta_domain - max(domain_threshold, 1.5)) * (0.022 * span), 0.0, 0.085 * span).astype(np.float32)
+            boosted_count = int(np.count_nonzero(lin_tilt > 0))
+            preds = preds + lin_tilt
+
     if use_log:
         weights = np.clip(np.rint(np.power(10.0, preds) - 1.0), w_min, w_max).astype(np.uint32)
     else:
         weights = np.clip(np.rint(preds), w_min, w_max).astype(np.uint32)
 
-    return weights, {
+    meta = {
         "mode": "log10_gbdt" if use_log else "linear_gbdt",
         "anchor_count": len(anchor_idxs_np),
         "val_r2": round(r2, 4),
         "val_mae": round(mae, 4),
         "val_spearman": round(rho, 4),
     }
+    if delta_domain is not None:
+        meta["domain_boosted_count"] = boosted_count
+    return weights, meta
 
 
 def score_payload_file(
@@ -441,6 +519,13 @@ def score_payload_file(
     max_batch: int = 2048,
     cn_prefixes: tuple[str, str] = ("。\n", "提到"),
     en_prefixes: tuple[str, str] = (".\n", "The "),
+    domain_prompt: str | None = None,
+    general_prompt: str = "日常与百科常见词条：",
+    en_domain_prompt: str | None = None,
+    en_general_prompt: str = "Common words and terms: ",
+    domain_threshold: float = 1.3,
+    domain_slope: float = 0.135,
+    domain_max_boost: float = 0.54,
 ) -> dict:
     import numpy as np
     import torch
@@ -478,6 +563,7 @@ def score_payload_file(
     del payload
 
     cn_weights = np.array([], dtype=np.uint32)
+    cn_delta_domain: np.ndarray | None = None
     cn_metrics: dict = {}
     if cn_words:
         print(f"\nScoring {len(cn_words):,} CJK/Mixed words ...", flush=True)
@@ -487,14 +573,34 @@ def score_payload_file(
             f"  Prefix Trie compressed {len(cn_words):,} words -> {len(cn_trie['leaves']):,} leaf paths",
             flush=True,
         )
-        cn_f1 = trie_score_pass(tok, full_model, backbone, lm_head, cn_trie, cn_prefixes[0], device=dev, max_batch=max_batch)
-        cn_f2 = trie_score_pass(tok, full_model, backbone, lm_head, cn_trie, cn_prefixes[1], device=dev, max_batch=max_batch)
-        del cn_trie
-        X_cn = build_feature_matrix(cn_words, cn_seqs, cn_f1, cn_f2)
-        cn_weights, cn_metrics = calibrate_weights(cn_words, X_cn, cn_anchors, log_space=True)
+        if domain_prompt:
+            cn_f_gen = trie_score_pass(tok, full_model, backbone, lm_head, cn_trie, general_prompt, device=dev, max_batch=max_batch)
+            cn_f_dom = trie_score_pass(tok, full_model, backbone, lm_head, cn_trie, domain_prompt, device=dev, max_batch=max_batch)
+            del cn_trie
+            cn_delta_domain = compute_domain_lift(cn_f_dom[:, 0], cn_f_gen[:, 0])
+            X_cn = build_single_context_features(cn_words, cn_seqs, cn_f_gen)
+            cn_weights, cn_metrics = calibrate_weights(
+                cn_words,
+                X_cn,
+                cn_anchors,
+                log_space=True,
+                delta_domain=cn_delta_domain,
+                domain_threshold=domain_threshold,
+                domain_slope=domain_slope,
+                domain_max_boost=domain_max_boost,
+            )
+            cn_metrics["general_prompt"] = general_prompt
+            cn_metrics["domain_prompt"] = domain_prompt
+        else:
+            cn_f1 = trie_score_pass(tok, full_model, backbone, lm_head, cn_trie, cn_prefixes[0], device=dev, max_batch=max_batch)
+            cn_f2 = trie_score_pass(tok, full_model, backbone, lm_head, cn_trie, cn_prefixes[1], device=dev, max_batch=max_batch)
+            del cn_trie
+            X_cn = build_feature_matrix(cn_words, cn_seqs, cn_f1, cn_f2)
+            cn_weights, cn_metrics = calibrate_weights(cn_words, X_cn, cn_anchors, log_space=True)
         print(f"  CJK calibration: {cn_metrics}", flush=True)
 
     en_weights = np.array([], dtype=np.uint32)
+    en_delta_domain: np.ndarray | None = None
     en_metrics: dict = {}
     if en_words:
         print(f"\nScoring {len(en_words):,} English words ...", flush=True)
@@ -504,19 +610,47 @@ def score_payload_file(
             f"  Prefix Trie compressed {len(en_words):,} words -> {len(en_trie['leaves']):,} leaf paths",
             flush=True,
         )
-        en_f1 = trie_score_pass(tok, full_model, backbone, lm_head, en_trie, en_prefixes[0], device=dev, max_batch=max_batch)
-        en_f2 = trie_score_pass(tok, full_model, backbone, lm_head, en_trie, en_prefixes[1], device=dev, max_batch=max_batch)
-        del en_trie
-        X_en = build_feature_matrix(en_words, en_seqs, en_f1, en_f2)
-        en_weights, en_metrics = calibrate_weights(en_words, X_en, en_anchors, log_space=True)
+        eff_en_dom = en_domain_prompt
+        if eff_en_dom is None and domain_prompt:
+            eff_en_dom = "Computer science and programming terms: "
+        if eff_en_dom:
+            en_f_gen = trie_score_pass(tok, full_model, backbone, lm_head, en_trie, en_general_prompt, device=dev, max_batch=max_batch)
+            en_f_dom = trie_score_pass(tok, full_model, backbone, lm_head, en_trie, eff_en_dom, device=dev, max_batch=max_batch)
+            del en_trie
+            en_delta_domain = compute_domain_lift(en_f_dom[:, 0], en_f_gen[:, 0])
+            X_en = build_single_context_features(en_words, en_seqs, en_f_gen)
+            en_weights, en_metrics = calibrate_weights(
+                en_words,
+                X_en,
+                en_anchors,
+                log_space=True,
+                delta_domain=en_delta_domain,
+                domain_threshold=domain_threshold,
+                domain_slope=domain_slope,
+                domain_max_boost=domain_max_boost,
+            )
+            en_metrics["general_prompt"] = en_general_prompt
+            en_metrics["domain_prompt"] = eff_en_dom
+        else:
+            en_f1 = trie_score_pass(tok, full_model, backbone, lm_head, en_trie, en_prefixes[0], device=dev, max_batch=max_batch)
+            en_f2 = trie_score_pass(tok, full_model, backbone, lm_head, en_trie, en_prefixes[1], device=dev, max_batch=max_batch)
+            del en_trie
+            X_en = build_feature_matrix(en_words, en_seqs, en_f1, en_f2)
+            en_weights, en_metrics = calibrate_weights(en_words, X_en, en_anchors, log_space=True)
         print(f"  EN calibration: {en_metrics}", flush=True)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_dir = output_path.parent / "_rime_qwen_scores_tmp"
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-    try:
+    with tempfile.TemporaryDirectory(prefix="rime_qwen_scores_") as tmp_str:
+        tmp_dir = Path(tmp_str)
         np.save(tmp_dir / "cn_weights.npy", cn_weights)
         np.save(tmp_dir / "en_weights.npy", en_weights)
+        extra_arcs: list[str] = []
+        if cn_delta_domain is not None:
+            np.save(tmp_dir / "cn_delta_domain.npy", np.round(cn_delta_domain, 3).astype(np.float16))
+            extra_arcs.append("cn_delta_domain.npy")
+        if en_delta_domain is not None:
+            np.save(tmp_dir / "en_delta_domain.npy", np.round(en_delta_domain, 3).astype(np.float16))
+            extra_arcs.append("en_delta_domain.npy")
         metrics = {
             "device": dev_label,
             "model": model_id,
@@ -530,8 +664,8 @@ def score_payload_file(
         with tarfile.open(output_path, "w:gz", compresslevel=6) as tar:
             tar.add(tmp_dir / "cn_weights.npy", arcname="cn_weights.npy")
             tar.add(tmp_dir / "en_weights.npy", arcname="en_weights.npy")
+            for arc in extra_arcs:
+                tar.add(tmp_dir / arc, arcname=arc)
             tar.add(tmp_dir / "metrics.json", arcname="metrics.json")
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
 
     return metrics

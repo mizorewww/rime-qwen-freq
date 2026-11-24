@@ -1,3 +1,3 @@
-"""Offline LLM word-frequency distillation and empirical scale calibration for Rime."""
+"""rime-qwen-freq: Offline LLM Unigram & Octagram N-gram Distillation for Rime."""
 
-__version__ = "0.2.0"
+__version__ = "0.4.0"

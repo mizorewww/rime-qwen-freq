@@ -1,0 +1,143 @@
+# category	mode	ctx_pinyin	ctx_text	pinyin	expected
+cs_sentence	sentence			tuicejiematisu	推测解码提速
+cs_sentence	sentence			jiangdishouziyanchi	降低首字延迟
+cs_sentence	sentence			jianzhihuancunzhanyonggao	键值缓存占用高
+cs_sentence	sentence			suanzirongheyouhua	算子融合优化
+cs_sentence	sentence			fanxiangchuanboyutidu	反向传播与梯度
+cs_sentence	sentence			hehanshudexianchengshu	核函数的线程束
+cs_sentence	sentence			tigaohuancunmingzhong	提高缓存命中
+cs_sentence	sentence			bimianweigongxiangchongtu	避免伪共享冲突
+cs_sentence	sentence			zaichangshangxiawenxia	在长上下文下
+cs_sentence	sentence			dizhizishiyingweitiao	低秩自适应微调
+cs_sentence	sentence			yuxiantuihuoxuexilv	余弦退火学习率
+cs_sentence	sentence			zhangliangbingxingtongxin	张量并行通信
+cs_sentence	sentence			fenyezhuyilijizhi	分页注意力机制
+cs_sentence	sentence			quchonghoudeshujuji	去重后的数据集
+cs_sentence	sentence			jiansuoyuchongpaixu	检索与重排序
+cs_sentence	sentence			shuangshuzuzidianshubiao	双数组字典树表
+cs_sentence	sentence			quanzhonglianghuatuili	权重量化推理
+cs_sentence	sentence			bianyiqitaoyifenxi	编译期逃逸分析
+cs_sentence	sentence			yuxierizhihuifu	预写日志恢复
+cs_sentence	sentence			chufarongduanjiangji	触发熔断降级
+cs_sentence	sentence			jianzhihuancunsuipian	键值缓存碎片
+cs_sentence	sentence			fenyezhuyilihuancun	分页注意力缓存
+cs_sentence	sentence			dizhijinsijuzhen	低秩近似矩阵
+cs_sentence	sentence			naofudianhunhejingdu	脑浮点混合精度
+cs_sentence	sentence			hebingfangcunyouhua	合并访存优化
+cs_sentence	sentence			cunchutichongtuyanzhong	存储体冲突严重
+cs_sentence	sentence			xuliebingxingyouhua	序列并行优化
+cs_sentence	sentence			zhuanjiabingxingluyou	专家并行路由
+cs_sentence	sentence			changshangxiawenwaitui	长上下文外推
+cs_sentence	sentence			ciyuanhuayuweidengluci	词元化与未登录词
+cs_sentence	sentence			duotouqianzaizhuyili	多头潜在注意力
+cs_sentence	sentence			qianzhuihuancunmingzhong	前缀缓存命中
+cs_sentence	sentence			dandiaozhanqiujizhi	单调栈求极值
+cs_sentence	sentence			anzhihebingyouhua	按秩合并优化
+cs_sentence	sentence			sisuojiancesuanfa	死锁检测算法
+cs_sentence	sentence			zhanzhenyudiaoyongzhan	栈帧与调用栈
+cs_sentence	sentence			kechongruyumideng	可重入与幂等
+cs_sentence	sentence			duxiesuoyuzixuansuo	读写锁与自旋锁
+cs_sentence	sentence			caiyanglvyudiubaolv	采样率与丢包率
+cs_sentence	sentence			jisuansuanshuqiangdu	计算算术强度
+cs_term	phrase			jianzhihuancun	键值缓存
+cs_term	phrase			qianzhuihuancun	前缀缓存
+cs_term	phrase			fenyezhuyili	分页注意力
+cs_term	phrase			duotouqianzaizhuyili	多头潜在注意力
+cs_term	phrase			xianxingzhuyili	线性注意力
+cs_term	phrase			dizhizishiying	低秩自适应
+cs_term	phrase			dizhijinsi	低秩近似
+cs_term	phrase			changshangxiawen	长上下文
+cs_term	phrase			shangxiawengongcheng	上下文工程
+cs_term	phrase			shouziyanchi	首字延迟
+cs_term	phrase			weiyanchi	尾延迟
+cs_term	phrase			zhangliangbingxing	张量并行
+cs_term	phrase			xuliebingxing	序列并行
+cs_term	phrase			zhuanjiabingxing	专家并行
+cs_term	phrase			yuxiantuihuo	余弦退火
+cs_term	phrase			naofudian	脑浮点
+cs_term	phrase			ciyuanhua	词元化
+cs_term	phrase			weidengluci	未登录词
+cs_term	phrase			zuxiangduicelveyouhua	组相对策略优化
+cs_term	phrase			zhuangtaikongjianmoxing	状态空间模型
+cs_term	phrase			wudingxianmoxing	屋顶线模型
+cs_term	phrase			suanshuqiangdu	算术强度
+cs_term	phrase			cunchutichongtu	存储体冲突
+cs_term	phrase			hebingfangcun	合并访存
+cs_term	phrase			xiancunsuipian	显存碎片
+cs_term	phrase			shuangshuzuzidianshu	双数组字典树
+cs_term	phrase			anzhihebing	按秩合并
+cs_term	phrase			dandiaozhan	单调栈
+cs_term	phrase			dandiaoduilie	单调队列
+cs_term	phrase			zhanzhen	栈帧
+cs_term	phrase			kechongru	可重入
+cs_term	phrase			huancunmingzhong	缓存命中
+cs_term	phrase			quchong	去重
+cs_term	phrase			chachong	查重
+cs_term	phrase			zhikui	秩亏
+cs_mixed	phrase			kvhuancun	KV缓存
+cs_mixed	phrase			loraweitiao	LoRA微调
+cs_mixed	phrase			qloraweitiao	QLoRA微调
+cs_mixed	phrase			gpuxiancun	GPU显存
+cs_mixed	phrase			cudahehanshu	CUDA核函数
+cs_mixed	phrase			astyufashu	AST语法树
+cs_mixed	phrase			jitbianyi	JIT编译
+cs_mixed	phrase			aotbianyi	AOT编译
+cs_mixed	phrase			simdzhiling	SIMD指令
+cs_mixed	phrase			rpckuangjia	RPC框架
+cs_mixed	phrase			httpqingqiu	HTTP请求
+cs_mixed	phrase			tcplianjie	TCP连接
+cs_mixed	phrase			dnsjiexi	DNS解析
+cs_mixed	phrase			sqlchaxun	SQL查询
+cs_mixed	phrase			jsongeshi	JSON格式
+cs_mixed	phrase			yamlpeizhi	YAML配置
+cs_mixed	phrase			gitcangku	Git仓库
+cs_mixed	phrase			sshmiyao	SSH密钥
+cs_mixed	phrase			apijiekou	API接口
+cs_mixed	phrase			klsandu	KL散度
+wiki_typo_trap	sentence			xiwangdajiazaijiezaili	希望大家再接再厉
+wiki_typo_trap	sentence			bidaozoutouwulu	逼到走投无路
+wiki_typo_trap	sentence			shuohuazhijieliaodang	说话直截了当
+wiki_typo_trap	sentence			anbujiubanchonggou	按部就班重构
+wiki_typo_trap	sentence			sunshiyijingshoulianle	损失已经收敛了
+wiki_typo_trap	sentence			baquchongshujudaochu	把去重数据导出
+wiki_typo_trap	sentence			zhuozhongpaichaxielou	着重排查泄漏
+wiki_typo_trap	sentence			zhuzailiwubijiaoanjing	住在里屋比较安静
+wiki_typo_trap	sentence			yidiandoubuzaiyi	一点都不在意
+wiki_typo_trap	sentence			cheliangchuanliubuxi	车辆川流不息
+wiki_typo_trap	sentence			juedemomingqimiao	觉得莫名其妙
+wiki_typo_trap	sentence			pobujidaixiangkan	迫不及待想看
+cs_colloc	contextual	huancun	缓存	mingzhong	命中
+cs_colloc	contextual	zhuyili	注意力	jizhi	机制
+cs_colloc	contextual	shouzi	首字	yanchi	延迟
+cs_colloc	contextual	zhangliang	张量	bingxing	并行
+cs_colloc	contextual	dizhi	低秩	zishiying	自适应
+cs_colloc	contextual	qu	去	zhong	重
+cs_colloc	contextual	xiancheng	线程	shu	束
+cs_colloc	contextual	yuxian	余弦	tuihuo	退火
+cs_colloc	contextual	jianzhi	键值	huancun	缓存
+cs_colloc	contextual	tuice	推测	jiema	解码
+cs_colloc	contextual	suanzi	算子	ronghe	融合
+cs_colloc	contextual	tidu	梯度	caijian	裁剪
+wiki_typo_trap	contextual	fanxiang	反向	chuanbo	传播
+wiki_typo_trap	contextual	shiwai	世外	taoyuan	桃源
+wiki_typo_trap	contextual	yigu	一鼓	zuoqi	作气
+wiki_typo_trap	contextual	chuanliu	川流	buxi	不息
+wiki_typo_trap	contextual	zoutou	走投	wulu	无路
+wiki_typo_trap	contextual	zhijie	直截	ledang	了当
+daily_guard	contextual	zhuzai	住在	liwu	里屋
+daily_guard	contextual	buhao	不好	yisi	意思
+daily_guard	sentence			quchaoshimaidiandongxi	去超市买点东西
+daily_guard	sentence			buhaoyisijiudengle	不好意思久等了
+daily_guard	sentence			zhoumoyoushenmeanpai	周末有什么安排
+daily_guard	sentence			zaoshangbadianchufa	早上八点出发
+daily_guard	sentence			jintiantianqitaihaole	今天天气太好了
+daily_guard	sentence			kanyixiazhefenwendang	看一下这份文档
+daily_guard	sentence			zuijingongzuobijiaomang	最近工作比较忙
+daily_guard	sentence			caihaochiyoupianyi	菜好吃又便宜
+daily_guard	sentence			zuoditiegengfangbian	坐地铁更方便
+daily_guard	sentence			wenjianfageinile	文件发给你了
+daily_guard	sentence			xiabanyiqichifanba	下班一起吃饭吧
+daily_guard	sentence			qianwanbuyaofangqi	千万不要放弃
+daily_guard	sentence			zaoshuizaoqihaoxiguan	早睡早起好习惯
+daily_guard	sentence			mingtianjianyimianba	明天见一面吧
+daily_guard	sentence			zhegewentijiejuele	这个问题解决了

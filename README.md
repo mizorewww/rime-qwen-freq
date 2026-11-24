@@ -1,150 +1,126 @@
 # rime-qwen-freq
 
-**Distill calibrated static word frequencies for Rime input method dictionaries from open-weight language models.**
+**Distill calibrated unigram word frequencies and PMI N-gram (`.gram`) language models for Rime from open-weight causal language models.**
 
 [![Newest release](https://img.shields.io/github/v/release/mizorewww/rime-qwen-freq?sort=semver&label=release)](https://github.com/mizorewww/rime-qwen-freq/releases)
 [![License: MIT](https://img.shields.io/github/license/mizorewww/rime-qwen-freq)](LICENSE)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
 ![macOS · Linux · Windows](https://img.shields.io/badge/rime-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-informational)
 
-**English** · [简体中文](README.zh-CN.md) · [Pre-built Dictionaries](#pre-built-dictionaries)
+**English** · [简体中文](README.zh-CN.md) · [Pre-built Assets](#pre-built-dictionaries--n-gram-model) · [Benchmark](#end-to-end-librime-benchmark)
 
-`rime-qwen-freq` audits a [Rime](https://rime.im/) configuration directory, finds `.dict.yaml` dictionaries that have missing or constant placeholder weights, scores their entries offline with a causal language model (`Qwen/Qwen3.5-0.8B-Base` by default), and calibrates the predicted weights onto the exact empirical scale of your existing base dictionary (`rime-ice`, `rime-wanxiang`, `rime-mint`, `luna_pinyin`, or `easy_en`).
+`rime-qwen-freq` upgrades [Rime](https://rime.im/) input method dictionaries and [`librime-octagram`](https://github.com/lotem/librime-octagram) `.gram` language models completely offline:
 
-All computation happens offline. Rime continues to use native `.table.bin` lookup at runtime with **zero inference latency**.
+1. **Unigram Dictionary Calibration (`inspect` / `run` / `extract` / `score` / `apply`):** Finds `.dict.yaml` tables with missing or placeholder weights (e.g. `60000` on every Wikipedia row), evaluates exact token log-probabilities via a deduplicated **Prefix Trie**, applies optional zero-corpus **Bayesian Domain Log-Odds Lift** (`--domain-prompt`), and calibrates onto the empirical scale of your base dictionary (`rime-wanxiang`, `rime-ice`, `rime-mint`, `luna_pinyin`, or `easy_en`).
+2. **Direct-Logit PMI N-gram Distillation (`distill-ngram` + `tools/gram_tool.cc`):** Distills multi-word collocations and sentence-ending `$` markers directly from a CausalLM's `lm_head` conditional distribution into Darts Double-Array `.gram` files, and audits existing `.gram` models to remove scraped web-corpus homophone typos.
+3. **Native `librime` End-to-End Benchmark (`bench`):** Links directly against `librime` + `librime-octagram` (`bench/rime_bench.cc`) to measure real whole-clause Pinyin conversion, phrase ranking, and contextual next-word accuracy.
 
-## Pre-built Dictionaries
+All neural computation happens offline. At runtime, Rime uses native memory-mapped `.table.bin` and `.gram` lookup with **0 ms neural inference latency**.
 
-Ready-to-use `.dict.yaml` tables pre-scored with `Qwen/Qwen3.5-0.8B-Base` and calibrated to the **Wanxiang (`wanxiang_jichu`)** / **ECDICT (`easy_en`)** scales (2,170,186 entries total) are available on the [Releases](https://github.com/mizorewww/rime-qwen-freq/releases/latest) page — no Python or GPU setup required:
+## Pre-built Dictionaries & N-gram Model
 
-| Dictionary | Entries | Upstream Source | Scale |
-|---|---:|---|---|
-| `zhwiki.dict.yaml` | 1,728,419 | Chinese Wikipedia (`fcitx5-pinyin-zhwiki`) | Wanxiang (`1` – `300,000`) |
-| `zhwiktionary.dict.yaml` | 285,853 | Chinese Wiktionary (`fcitx5-pinyin-zhwiki`) | Wanxiang (`1` – `300,000`) |
-| `moegirl.dict.yaml` | 129,813 | Moegirlpedia (`mw2fcitx`) | Wanxiang (`1` – `300,000`) |
-| `web_slang.dict.yaml` | 423 | Web slang (`fcitx5-pinyin-zhwiki`) | Wanxiang (`1` – `300,000`) |
-| `wanxiang_mixed.dict.yaml` | 1,817 | CJK-Latin mixed terms (`rime-wanxiang` toneless) | Wanxiang (`1` – `300,000`) |
-| `rime_ice.en.dict.yaml` | 21,263 | Core English vocabulary (`rime-ice`) | ECDICT (`900,000` – `999,995`) |
-| `rime_ice.en_ext.dict.yaml` | 2,598 | Extended English & tech terms (`rime-ice`) | ECDICT (`900,000` – `999,995`) |
+Ready-to-use `.dict.yaml` tables and a standalone `qwen14b-zh-hans.gram` model distilled from `Qwen/Qwen3-14B-Base` are available on the [Releases](https://github.com/mizorewww/rime-qwen-freq/releases/latest) page — no Python or GPU required:
 
-Download [`rime-qwen-dicts-v0.2.0.tar.gz`](https://github.com/mizorewww/rime-qwen-freq/releases/download/v0.2.0/rime-qwen-dicts-v0.2.0.tar.gz) (or [`.zip`](https://github.com/mizorewww/rime-qwen-freq/releases/download/v0.2.0/rime-qwen-dicts-v0.2.0.zip)), extract into your Rime `dicts/` directory, reference the desired tables under `import_tables:` in your `.dict.yaml`, and redeploy Rime.
+| Asset | Entries / Keys | Size (`.gz`) | Description |
+|---|---:|---:|---|
+| `qwen14b-zh-hans.gram.gz` | 1,031,842 | 9.4 MiB | Standalone `Qwen3-14B-Base` PMI N-gram + Rear-`$` model (`11.4 MiB` uncompressed, 35× smaller than `400.8 MiB` corpus `.gram`) |
+| `cs_ai.dict.yaml.gz` | 1,986 | 26 KiB | Curated + Bayesian-mined CS / AI / ML / Systems terms with polyphone-verified Pinyin |
+| `zhwiki.dict.yaml.gz` | 1,464,285 | 17.4 MiB | Chinese Wikipedia (`fcitx5-pinyin-zhwiki`, deduplicated & calibrated to Wanxiang `1–350,000`) |
+| `zhwiktionary.dict.yaml.gz` | 165,545 | 1.6 MiB | Chinese Wiktionary (`fcitx5-pinyin-zhwiki`, deduplicated & calibrated) |
+| `moegirl.dict.yaml.gz` | 105,076 | 1.9 MiB | Moegirlpedia (`mw2fcitx`, deduplicated & calibrated) |
+| `web_slang.dict.yaml.gz` | 423 | 6.5 KiB | Web slang (`fcitx5-pinyin-zhwiki`, calibrated) |
+| `wanxiang_mixed.dict.yaml.gz` | 1,817 | 19 KiB | CJK-Latin mixed terms (`rime-wanxiang` toneless, polyphone-disambiguated) |
+| `rime_ice.en.dict.yaml.gz` | 21,263 | 194 KiB | Core English vocabulary (`rime-ice`, calibrated to ECDICT `900,000–999,995`) |
+| `rime_ice.en_ext.dict.yaml.gz` | 2,598 | 29 KiB | Extended English & tech terms (`rime-ice`, calibrated to ECDICT) |
 
-## Why not read BPE ranks or raw log-probabilities?
+## End-to-End `librime` Benchmark
 
-Third-party Rime extension dictionaries (Wikipedia titles, Wiktionary, ACG/fandom lexicons, slang lists, bilingual supplements) frequently omit the weight column or assign a flat placeholder constant (such as `60000` on every row), causing obscure multi-word stubs to outrank everyday words on short Pinyin prefixes.
+Evaluated in a clean 0-`userdb` sandbox with `rime-qwen-freq bench` (`bench/bench_cases.tsv`, 142 continuous Pinyin inputs $\le 25$ keys across CS/AI whole clauses, technical compounds, CJK-Latin mixed terms, contextual disambiguation, homophone typo traps, and daily conversational guard sentences) using native `librime` + `librime-octagram`:
 
-Two common shortcuts fail in practice:
+| Configuration | Overall Top-1 | Target Suite (`125`) | CS Clauses (`40`) | CS Terms (`35`) | CJK-Latin (`20`) | Contextual (`12`) | Daily Guard (`17`) | CharAcc | `.gram` Size |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **Original Baseline** (`60000` wiki + stock `.gram`) | `38.03%` | `29.60%` | `22.5%` | `40.0%` | `5.0%` | `41.7%` | `100.0%` | `65.38%` | 400.8 MiB |
+| **+ 14B Unigram Dicts & CS Lift** | `88.73%` | `87.20%` | `82.5%` | `100.0%` | `100.0%` | `75.0%` | `100.0%` | `96.28%` | 400.8 MiB |
+| **+ Pure 14B `.gram`** (`qwen14b-zh-hans.gram`) | `90.85%` | `90.40%` | `85.0%` | `100.0%` | `100.0%` | `83.3%` | `94.1%` | `97.52%` | **11.4 MiB** |
+| **+ Hybrid Cleaned + 14B `.gram`** | **`92.25%`** | **`91.20%`** | **`95.0%`** | **`100.0%`** | **`100.0%`** | **`83.3%`** | **`100.0%`** | **`97.79%`** | 385.5 MiB |
 
-1. **Tokenizer BPE merge ranks are not word frequencies.** Byte-level BPE vocabularies contain non-lexical glue fragments (`"的时"`, `"了一"`), omit pronunciation disambiguation, and flatten Zipfian frequency gaps into linear merge indices.
-2. **Raw sequence log-likelihood $\log P(w)$ is length-biased and uncalibrated.** A 2-character word naturally has a much higher joint probability than a 6-character proper noun, and raw log-probabilities cannot be merged directly with corpus-counted weights in an existing Rime schema.
+Deduplicating redundant base pairs and zero-weight English entries also reduced compiled Rime binary tables (`build/*.bin`) from **296.0 MiB to 170.4 MiB (`-42.4%`)**.
 
-`rime-qwen-freq` solves both by combining **exact Prefix-Trie teacher-forcing** across complementary contexts with **empirical anchor regression** trained directly on the weighted base dictionaries already present in your Rime folder.
+## Why PMI for Rime N-grams, and Why Naive LLM Approaches Fail
+
+### 1. Rime's `Poet` + `Octagram` equation requires Pointwise Mutual Information (PMI)
+In `librime` (`poet.cc` + `dict_compiler.cc`), candidate path scoring computes:
+
+$$\text{Score}(\text{context} \to \text{word}) = \ln\big(\text{dict\_weight}(\text{word})\big) + \text{Octagram::Query}(\text{context}, \text{word})$$
+
+Because the dictionary term $\ln(\text{weight}(\text{word}))$ **already includes the unigram log-prior $\ln P(\text{word})$**, matching the true log-probability $\ln P(\text{word} \mid \text{context})$ requires `Octagram::Query` to supply the **conditional log-gain (PMI)**:
+
+$$\text{PMI}(\text{context}, \text{word}) = \ln P(\text{word} \mid \text{context}) - \ln P(\text{word})$$
+
+Storing raw corpus co-occurrence counts double-counts high-frequency words, while corpus-segmented KenLM pipelines suffer from web misspellings (e.g. `再接再励 = 200,616` outranking `再接再厉 = 176,835`, or `穿流不息 = 180,687` while `川流不息 = -1` was dropped by 1-gram segmentation underflow). Evaluating $\ln P(w_2 \mid w_1) - \ln P(w_2)$ directly from `Qwen3-14B-Base`'s `lm_head` eliminates web-corpus typos and scores billions of single-token word transitions in vectorized matrix form.
+
+### 2. Frame-Matched Bayesian Domain Log-Odds Lift
+Prompting a model with a bare prefix like `"在计算机科学中"` boosts generic glue words (`"的"`, `"问题"`). Pairing two structurally matched prompts — $C_{\text{domain}} = \text{"计算机科学与人工智能术语："}$ and $C_{\text{general}} = \text{"日常与百科常见词条："}$ — isolates exact domain concentration:
+
+$$\Delta_{\text{domain}}(w) = \log P(w \mid C_{\text{domain}}) - \log P(w \mid C_{\text{general}})$$
+
+General words cancel near zero or negative (`原神 = -3.50`), while genuine technical terms (`算子融合 = +7.56`, `前缀树 = +6.12`, `推测解码 = +4.24`) receive a smooth, bounded weight boost.
 
 ## Installation
-
-Requires **Python 3.10+**.
-
-### Full installation (scoring + dictionary management)
-
-Install in a virtual environment on any machine with **Apple Silicon (`mps`)**, an **NVIDIA GPU (`cuda`)**, or CPU:
 
 ```bash
 git clone https://github.com/mizorewww/rime-qwen-freq.git
 cd rime-qwen-freq
+
+# Full environment (CUDA / Apple Silicon MPS / CPU scoring + distillation):
 pip install -e ".[score]"
-```
 
-On Linux with an NVIDIA GPU, optional fused linear-attention kernels for `Qwen3.5` can be installed via:
-
-```bash
-pip install -e ".[score,cuda-kernels]"
-```
-
-### Lightweight client installation (stdlib only)
-
-The `inspect`, `extract`, and `apply` subcommands use **only the Python standard library** (including a pure-stdlib `.npy` reader). If you extract words on a lightweight laptop and run `score` on a separate GPU box, the laptop needs no third-party packages:
-
-```bash
+# Lightweight client (Python stdlib only — for inspect / extract / apply / bench):
 pip install --no-deps -e .
 ```
 
-## Usage
-
-### 1. Audit your Rime dictionaries
-
-Scan your Rime user directory (`~/Library/Rime` on macOS, `~/.local/share/fcitx5/rime` or `~/.config/ibus/rime` on Linux, `%APPDATA%\Rime` on Windows) to see which tables have real empirical distributions (`anchor`), which lack real weights (`needs-weights`), and which auxiliary typo/symbol tables are intentionally skipped (`skip-special`):
+To compile the standalone C++ `.gram` builder/merger (`tools/gram_tool.cc`):
 
 ```bash
+c++ -O3 -std=c++17 tools/gram_tool.cc -o gram_tool
+```
+
+## Quick Start
+
+### 1. Audit and calibrate Rime dictionaries
+```bash
+# Inspect your Rime dictionaries (macOS / Linux / Windows auto-detected)
 rime-qwen-freq inspect
-```
 
-Example output:
+# One-shot local scoring + atomic writeback + Rime redeploy
+rime-qwen-freq run --model Qwen/Qwen3.5-0.8B-Base --deploy
 
-```text
-Rime directory: /Users/alice/Library/Rime
-
-Dictionary                           Lang    Entries    UniqW      P50       P99  Role            Diagnostic
-------------------------------------------------------------------------------------------------------------------------------------
-dicts/wanxiang_jichu.dict.yaml       zh    1,493,800   11,352      279     5,256  anchor          11,352 distinct empirical weights
-dicts/zhwiki.dict.yaml               zh    1,728,419        1   60,000    60,000  needs-weights   100.0% constant weight (60000)
-dicts/moegirl.dict.yaml              zh      129,813        1   60,000    60,000  needs-weights   100.0% constant weight (60000)
-dicts/wanxiang_mixed.dict.yaml       zh        1,817        0        0         0  needs-weights   100% missing weights
-dicts/rime_ice.others.dict.yaml      zh          584        0        0         0  skip-special    typo/aux/shape dictionary
-dicts/easy_en.dict.yaml              en      745,397   40,770  973,299   998,120  anchor          40,770 distinct empirical weights
-dicts/rime_ice.en.dict.yaml          en       21,263        0        0         0  needs-weights   100% missing weights
-```
-
-### 2. One-shot local pipeline (`run`)
-
-If your machine has Apple Silicon (`mps`) or an NVIDIA GPU (`cuda`), run extraction, scoring, atomic dictionary update (with automatic backups in `./backup_dicts`), and Rime redeployment in a single command:
-
-```bash
-rime-qwen-freq run --deploy
-```
-
-To score only specific dictionaries or use another Hugging Face CausalLM checkpoint:
-
-```bash
-rime-qwen-freq run \
-  --targets dicts/zhwiki.dict.yaml dicts/wanxiang_mixed.dict.yaml \
-  --model Qwen/Qwen3-0.6B-Base \
-  --deploy
-```
-
-### 3. Split workflow across two machines (`extract` → `score` → `apply`)
-
-When your Rime setup lives on a thin laptop and you want to run scoring on a separate GPU workstation or server:
-
-```bash
-# Step A (on laptop, stdlib only): package target words + stratified anchor sample
+# Or split across laptop (stdlib) and GPU server with CS/AI domain lift:
 rime-qwen-freq extract -o payload.json.gz
-
-# Step B (on GPU machine): run Prefix-Trie scoring & calibration
-rime-qwen-freq score -i payload.json.gz -o scores.tar.gz --model Qwen/Qwen3.5-0.8B-Base
-
-# Step C (on laptop, stdlib only): back up originals, write weights atomically, and reload Rime
+rime-qwen-freq score -i payload.json.gz -o scores.tar.gz \
+  --model Qwen/Qwen3-14B-Base \
+  --domain-prompt "计算机科学与人工智能术语：" \
+  --general-prompt "日常与百科常见词条："
 rime-qwen-freq apply -p payload.json.gz -s scores.tar.gz --deploy
 ```
 
-## How It Works
+### 2. Distill and compile a `.gram` N-gram model
+```bash
+# Distill high-PMI collocations & Rear-$ markers directly from Qwen3-14B-Base
+rime-qwen-freq distill-ngram -o distilled_ngrams.tsv.gz --model Qwen/Qwen3-14B-Base
+gunzip -k distilled_ngrams.tsv.gz
 
-1. **Prefix-Trie Exact Teacher-Forcing:** All target words and anchor words are tokenized into BPE sequences and inserted into a proper-prefix Trie. Shared prefixes are evaluated by the transformer backbone **only once**, and a sparse on-device gather extracts only the required child token log-probabilities (avoiding multi-gigabyte `[batch, vocab_size]` host transfers). A built-in numerical equivalence check verifies exactness against full-sequence `log_softmax` before each run.
-2. **Dual-Context Feature Extraction:** Each entry is scored under two complementary contexts — clause-initial (`"。\n"` / `".\n"`) for general vocabulary and mention-context (`"提到"` / `"The "`) for named entities, technical terms, and mixed CJK-ASCII tokens — extracting total log-probability, entry/exit transitions, weakest-link token log-probability (which penalizes malformed encyclopedia titles), token count, character length, and BPE rank features.
-3. **Empirical Anchor Calibration:** Stratified ground-truth anchors sampled from your existing base dictionaries train a regularized `HistGradientBoostingRegressor` in $\log_{10}(w + 1)$ space (or linear rank space for ECDICT-style tables), followed by a variance-preserving stretch so high-frequency words and rare long-tail entries match your schema's native Zipfian distribution.
+# Compile a standalone .gram file:
+./gram_tool build distilled_ngrams.tsv qwen14b-zh-hans.gram
 
-### Sample Calibration Results (`Qwen/Qwen3.5-0.8B-Base`, 2.16M unique entries)
+# Or clean homophone typos + merge into an existing base .gram:
+./gram_tool merge wanxiang-lts-zh-hans.gram typo_blacklist.txt distilled_ngrams.tsv 140000 wanxiang-qwen14b-zh-hans.gram
+```
 
-Evaluated on 15,001 held-out ground-truth entries from `wanxiang_jichu`: **$R^2 = 0.637$**, **Spearman $\rho = 0.735$** ($\text{MAE}_{\log_{10}} = 0.465$).
-
-| Entry | Source Dictionary | Previous Weight | Calibrated Weight | Reference Ground Truth |
-|---|---|---:|---:|---:|
-| `深度学习` | Held-out validation | — | `14,714` | `15,502` |
-| `原神` | Held-out validation | — | `13,914` | `12,425` |
-| `3D` / `5G` | `wanxiang_mixed` | *(missing)* | `4,338` / `2,301` | — |
-| `B站` / `A股` | `web_slang` / `zhwiktionary` | `60,000` | `2,053` / `840` | — |
-| `女奴` | `moegirl` | `60,000` | `374` | `455` |
-| `三角力量` / `滨边美波` | `moegirl` | `60,000` | `106` / `52` | — |
-| `-真天地开辟集团-慈愚挫愚` | `zhwiki` | `60,000` | `3` | — |
+### 3. Run the native `librime` benchmark
+```bash
+rime-qwen-freq bench --rime-dir ~/Library/Rime --schema rime_mint
+```
 
 ## CLI Reference
 
@@ -153,23 +129,17 @@ Evaluated on 15,001 held-out ground-truth entries from `wanxiang_jichu`: **$R^2 
 | `rime-qwen-freq inspect` | Python stdlib | Audit `.dict.yaml` weight distributions and auto-detected roles (`--json` supported) |
 | `rime-qwen-freq run` | `[score]` | End-to-end local extract, score, backup, atomic rewrite, and optional `--deploy` |
 | `rime-qwen-freq extract` | Python stdlib | Export deduplicated target words and stratified anchors to `.json.gz` |
-| `rime-qwen-freq score` | `[score]` | Score a `.json.gz` bundle on `cuda`, `mps`, or `cpu` and emit `.tar.gz` weights + metrics |
-| `rime-qwen-freq apply` | Python stdlib | Back up original `.dict.yaml` files, apply `.tar.gz` weights atomically, and `--deploy` |
+| `rime-qwen-freq score` | `[score]` | Score `.json.gz` on `cuda`/`mps`/`cpu` with optional `--domain-prompt` lift |
+| `rime-qwen-freq apply` | Python stdlib | Back up originals, apply `.tar.gz` weights atomically, and `--deploy` |
+| `rime-qwen-freq distill-ngram` | `[score]` | Distill PMI collocations and Rear-`$` markers from a CausalLM `.tsv.gz` |
+| `rime-qwen-freq bench` | Python stdlib + C++17 | Compile `bench/rime_bench.cc` and benchmark a Rime folder via native `librime` |
 
-`--deploy` automatically invokes Squirrel (`rime_deployer` + `Squirrel --reload`) on macOS, `rime_deployer` + `fcitx5-remote -r` / `ibus restart` on Linux, and `WeaselDeployer.exe /deploy` on Windows.
-
-## Development & Testing
-
-Run the unit test suite (covers dictionary classification, extraction, atomic rewriting, and the pure-stdlib `.npy` parser):
+## Testing
 
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 
-## Contributing
-
-Issues and pull requests are welcome. For major changes to the feature extractor or calibration objective, please open an issue first with before/after Spearman $\rho$ metrics on a held-out anchor split.
-
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) (`tools/darts.h` is BSD-licensed Darts-clone v0.32 by Susumu Yata).

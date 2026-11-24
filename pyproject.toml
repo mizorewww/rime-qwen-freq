@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rime-qwen-freq"
-version = "0.2.0"
-description = "Offline neural language model word-frequency distillation and empirical scale calibration for Rime input method dictionaries."
+version = "0.4.0"
+description = "Offline CausalLM unigram word-frequency calibration, Bayesian domain log-odds boosting, and PMI N-gram (.gram) distillation for Rime."
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
 authors = [{ name = "mizorewww" }]
-keywords = ["rime", "ime", "pinyin", "word-frequency", "qwen", "language-model", "distillation"]
+keywords = ["rime", "ime", "pinyin", "word-frequency", "ngram", "octagram", "qwen", "language-model", "distillation"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
@@ -56,3 +56,6 @@ Issues = "https://github.com/mizorewww/rime-qwen-freq/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+rime_qwen_freq = ["_bench/*"]

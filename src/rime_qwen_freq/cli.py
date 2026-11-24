@@ -13,6 +13,7 @@ from .dicts import (
     default_rime_dir,
     discover_dict_files,
     extract_payload,
+    iter_dict_entries,
 )
 
 
@@ -84,6 +85,13 @@ def cmd_score(args: argparse.Namespace) -> int:
         model_id=args.model,
         device=args.device,
         max_batch=args.max_batch,
+        domain_prompt=args.domain_prompt,
+        general_prompt=args.general_prompt,
+        en_domain_prompt=args.en_domain_prompt,
+        en_general_prompt=args.en_general_prompt,
+        domain_threshold=args.domain_threshold,
+        domain_slope=args.domain_slope,
+        domain_max_boost=args.domain_max_boost,
     )
     print("\nCompleted scoring:")
     print(json.dumps(metrics, indent=2, ensure_ascii=False))
@@ -133,6 +141,13 @@ def cmd_run(args: argparse.Namespace) -> int:
             model_id=args.model,
             device=args.device,
             max_batch=args.max_batch,
+            domain_prompt=args.domain_prompt,
+            general_prompt=args.general_prompt,
+            en_domain_prompt=args.en_domain_prompt,
+            en_general_prompt=args.en_general_prompt,
+            domain_threshold=args.domain_threshold,
+            domain_slope=args.domain_slope,
+            domain_max_boost=args.domain_max_boost,
         )
 
         res = apply_scores_archive(
@@ -150,10 +165,101 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_distill_ngram(args: argparse.Namespace) -> int:
+    from .ngram import distill_ngrams_from_lexicon
+
+    rime_dir = args.rime_dir.expanduser().resolve()
+    word_weights: dict[str, int] = {}
+    for p in discover_dict_files(rime_dir):
+        st = analyze_dict(rime_dir, p)
+        if st.lang != "zh" or st.role == "skip-special":
+            continue
+        for w, _, wt in iter_dict_entries(p):
+            if w and 1 <= len(w) <= 5 and all("\u4e00" <= c <= "\u9fff" for c in w):
+                v = int(float(wt)) if wt and wt.replace(".", "", 1).isdigit() else 50
+                if v > word_weights.get(w, 0):
+                    word_weights[w] = v
+
+    ranked = sorted(word_weights.items(), key=lambda x: x[1], reverse=True)
+    ctx_words = [w for w, _ in ranked[: args.max_contexts] if 1 <= len(w) <= 4]
+    lex_words = [w for w, _ in ranked[: args.max_lexicon]]
+    res = distill_ngrams_from_lexicon(
+        lexicon_words=lex_words,
+        context_words=ctx_words,
+        output_tsv_gz=args.output.expanduser().resolve(),
+        model_id=args.model,
+        device=args.device,
+        general_prompt=args.general_prompt,
+        domain_prompt=args.domain_prompt,
+        min_pmi=args.min_pmi,
+    )
+    print(json.dumps(res, indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_bench(args: argparse.Namespace) -> int:
+    from .bench import run_benchmark
+
+    run_benchmark(
+        user_dir=args.rime_dir.expanduser().resolve(),
+        cases_path=args.cases.expanduser().resolve() if args.cases else None,
+        out_json=args.out.expanduser().resolve() if args.out else None,
+        schema_id=args.schema,
+        shared_dir=args.shared_dir.expanduser().resolve() if args.shared_dir else None,
+        deploy=args.deploy,
+        include_userdb=args.include_userdb,
+        rime_lib=args.rime_lib.expanduser().resolve() if args.rime_lib else None,
+        octagram_lib=args.octagram_lib.expanduser().resolve() if args.octagram_lib else None,
+        lua_lib=args.lua_lib.expanduser().resolve() if args.lua_lib else None,
+    )
+    return 0
+
+
+def _add_domain_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--domain-prompt",
+        default=None,
+        help="Optional CJK domain context C_domain (e.g. '计算机科学与人工智能术语：') for Bayesian Log-Odds Lift",
+    )
+    p.add_argument(
+        "--general-prompt",
+        default="日常与百科常见词条：",
+        help="Frame-matched CJK general context C_general paired with --domain-prompt",
+    )
+    p.add_argument(
+        "--en-domain-prompt",
+        default=None,
+        help="Optional EN domain context (e.g. 'Computer science and programming terms: ')",
+    )
+    p.add_argument(
+        "--en-general-prompt",
+        default="Common words and terms: ",
+        help="Frame-matched EN general context paired with --en-domain-prompt",
+    )
+    p.add_argument(
+        "--domain-threshold",
+        type=float,
+        default=1.3,
+        help="Minimum log-odds lift in nats before domain boost activates (default: 1.3)",
+    )
+    p.add_argument(
+        "--domain-slope",
+        type=float,
+        default=0.135,
+        help="Log10 weight gain per nat above --domain-threshold (default: 0.135)",
+    )
+    p.add_argument(
+        "--domain-max-boost",
+        type=float,
+        default=0.54,
+        help="Maximum log10 weight boost cap (~3.47x at 0.54, default: 0.54)",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="rime-qwen-freq",
-        description="Distill calibrated static word frequencies for Rime dictionaries from a causal language model.",
+        description="Distill calibrated unigram word frequencies and PMI N-gram (.gram) models for Rime from a CausalLM.",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -177,6 +283,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--backup-dir", type=Path, default=Path("./backup_dicts"), help="Directory for original dictionary backups")
     p_run.add_argument("--deploy", action="store_true", help="Rebuild Rime tables and reload input method after writeback")
     p_run.add_argument("--seed", type=int, default=42)
+    _add_domain_args(p_run)
     p_run.set_defaults(func=cmd_run)
 
     # extract
@@ -197,6 +304,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_scr.add_argument("--model", default="Qwen/Qwen3.5-0.8B-Base", help="Hugging Face CausalLM ID or local path")
     p_scr.add_argument("--device", default="auto", help="Compute device: auto, cuda, mps, or cpu")
     p_scr.add_argument("--max-batch", type=int, default=2048, help="Maximum leaf batch size")
+    _add_domain_args(p_scr)
     p_scr.set_defaults(func=cmd_score)
 
     # apply
@@ -208,6 +316,33 @@ def build_parser() -> argparse.ArgumentParser:
     p_app.add_argument("--targets", nargs="*", default=None, help="Override target dictionary list")
     p_app.add_argument("--deploy", action="store_true", help="Rebuild Rime tables and reload input method")
     p_app.set_defaults(func=cmd_apply)
+
+    # distill-ngram
+    p_ng = sub.add_parser("distill-ngram", help="Distill PMI collocations and Rear-$ markers from a CausalLM for Octagram (.gram).")
+    p_ng.add_argument("--rime-dir", type=Path, default=default_rime_dir(), help="Rime user configuration directory")
+    p_ng.add_argument("-o", "--output", type=Path, default=Path("distilled_ngrams.tsv.gz"), help="Output .tsv.gz for tools/gram_tool")
+    p_ng.add_argument("--model", default="Qwen/Qwen3-14B-Base", help="Hugging Face CausalLM ID or local path")
+    p_ng.add_argument("--device", default="auto", help="Compute device: auto, cuda, mps, or cpu")
+    p_ng.add_argument("--max-contexts", type=int, default=50_000, help="Number of top context words w1 to expand")
+    p_ng.add_argument("--max-lexicon", type=int, default=90_000, help="Size of continuation vocabulary V")
+    p_ng.add_argument("--general-prompt", default="常见中文语句片段：")
+    p_ng.add_argument("--domain-prompt", default="计算机科学与人工智能技术讨论：")
+    p_ng.add_argument("--min-pmi", type=float, default=2.35, help="Minimum PMI threshold in nats (default: 2.35)")
+    p_ng.set_defaults(func=cmd_distill_ngram)
+
+    # bench
+    p_bn = sub.add_parser("bench", help="Run native librime + librime-octagram end-to-end Pinyin decoding benchmark.")
+    p_bn.add_argument("--rime-dir", type=Path, default=default_rime_dir(), help="Rime user configuration directory to benchmark")
+    p_bn.add_argument("--shared-dir", type=Path, default=None, help="Rime shared data directory (auto-detected if omitted)")
+    p_bn.add_argument("--cases", type=Path, default=None, help="Custom benchmark TSV (default: bundled bench_cases.tsv)")
+    p_bn.add_argument("--out", type=Path, default=None, help="Optional JSON output path")
+    p_bn.add_argument("--schema", default="rime_mint", help="Target schema ID (default: rime_mint)")
+    p_bn.add_argument("--deploy", action="store_true", help="Run Rime maintenance/deploy inside isolated sandbox before benchmarking")
+    p_bn.add_argument("--include-userdb", action="store_true", help="Copy personal *.userdb into sandbox (default: clean 0-userdb evaluation)")
+    p_bn.add_argument("--rime-lib", type=Path, default=None, help="Explicit path to librime (.dylib / .so.1 / rime.dll)")
+    p_bn.add_argument("--octagram-lib", type=Path, default=None, help="Explicit path to librime-octagram plugin")
+    p_bn.add_argument("--lua-lib", type=Path, default=None, help="Explicit path to librime-lua plugin")
+    p_bn.set_defaults(func=cmd_bench)
 
     return parser
 

@@ -1,161 +1,114 @@
 # rime-qwen-freq
 
-**利用开源因果语言模型，为 Rime（中州韵）输入法词库离线蒸馏并校准静态词频权重。**
+**利用开源因果语言模型，为 Rime（中州韵）离线蒸馏静态词频与 PMI 语法模型（`.gram`）。**
 
 [![Newest release](https://img.shields.io/github/v/release/mizorewww/rime-qwen-freq?sort=semver&label=release)](https://github.com/mizorewww/rime-qwen-freq/releases)
 [![License: MIT](https://img.shields.io/github/license/mizorewww/rime-qwen-freq)](LICENSE)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
 ![macOS · Linux · Windows](https://img.shields.io/badge/rime-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-informational)
 
-[English](README.md) · **简体中文** · [预构建词表下载](#预构建词表下载)
+[English](README.md) · **简体中文** · [预构建词表与语法模型下载](#预构建词表与语法模型下载) · [端到端评测](#端到端-librime-基准评测)
 
-`rime-qwen-freq` 会自动扫描你的 [Rime](https://rime.im/) 配置目录，识别**缺失词频列**或**被统一填充假常数权重**的 `.dict.yaml` 扩展词库，在离线环境下利用开源语言模型（默认 `Qwen/Qwen3.5-0.8B-Base`，支持任意 Hugging Face `CausalLM`）提取序列概率特征，并将其精准校准到你现有主力词库（如雾凇拼音 `rime-ice`、万象拼音 `rime-wanxiang`、薄荷拼音 `rime-mint`、朙月拼音或 `easy_en`）的真实词频尺度上。
+`rime-qwen-freq` 在**纯离线阶段**用开源基座语言模型升级 [Rime](https://rime.im/) 的两层核心数据：
 
-所有模型计算均在**离线阶段一次性完成**；打字运行时依然使用 Rime 原生 `.table.bin` 查表，**零推理延迟、零后台常驻进程**。
+1. **词表词频校准与领域增益（Unigram）**：自动扫描缺词频或填死常数（如全部 `60000`）的 `.dict.yaml`，通过 **BPE 精确前缀树（Prefix Trie）** 前向打分、**经验锚点分布回归** 与可选的 **贝叶斯领域对数几率提升（`--domain-prompt`）**，把词频精准对齐到你现有主力词库（万象、雾凇、薄荷、朙月或 `easy_en`）的尺度上。
+2. **直接对数几率 PMI 语法模型蒸馏（N-gram / `.gram`）**：直接读取语言模型 `lm_head` 的条件概率分布，按点互信息（PMI）蒸馏多词搭配与句尾 `$` 收敛标记，通过内置 C++ 工具 `tools/gram_tool.cc` 编译为 `librime-octagram` 双数组前缀树 `.gram` 文件，并支持扫描清洗传统爬虫 `.gram` 中的同音错别字。
+3. **原生 `librime` 端到端基准评测（`bench`）**：直接动态链接系统 Rime 引擎（`librime` + `librime-octagram`），实测连续全拼整句盲打、专业术语首选率与上下文联想消歧准确率。
 
-## 预构建词表下载
+所有计算在离线一次性完成；日常打字依然是纯静态 `.table.bin` + `.gram` 内存映射查表，**0 毫秒推理延迟、零后台驻留**。
 
-如果你不想自己跑模型，可以直接在 [Releases](https://github.com/mizorewww/rime-qwen-freq/releases/latest) 页面下载已经用 `Qwen/Qwen3.5-0.8B-Base` 跑完并对齐**万象（`wanxiang_jichu`）/ ECDICT（`easy_en`）尺度**的成品 `.dict.yaml` 词库（合计 **2,170,186 条**）：
+## 预构建词表与语法模型下载
 
-| 词典文件 | 词条数 | 上游词条来源 | 校准词频尺度 |
-|---|---:|---|---|
-| `zhwiki.dict.yaml` | 1,728,419 | 中文维基百科（`fcitx5-pinyin-zhwiki`） | 万象尺度（`1` – `300,000`） |
-| `zhwiktionary.dict.yaml` | 285,853 | 维基词典（`fcitx5-pinyin-zhwiki`） | 万象尺度（`1` – `300,000`） |
-| `moegirl.dict.yaml` | 129,813 | 萌娘百科（`mw2fcitx`） | 万象尺度（`1` – `300,000`） |
-| `web_slang.dict.yaml` | 423 | 网络流行语（`fcitx5-pinyin-zhwiki`） | 万象尺度（`1` – `300,000`） |
-| `wanxiang_mixed.dict.yaml` | 1,817 | 中英混输词条（`rime-wanxiang` 去声调兼容版） | 万象尺度（`1` – `300,000`） |
-| `rime_ice.en.dict.yaml` | 21,263 | 雾凇拼音英文主词库（`rime-ice`） | ECDICT 尺度（`900,000` – `999,995`） |
-| `rime_ice.en_ext.dict.yaml` | 2,598 | 雾凇拼音英文扩展词库（`rime-ice`） | ECDICT 尺度（`900,000` – `999,995`） |
+不想本地跑模型的用户，可直接在 [Releases](https://github.com/mizorewww/rime-qwen-freq/releases/latest) 下载基于 `Qwen/Qwen3-14B-Base` 蒸馏好的成品文件：
 
-下载 [`rime-qwen-dicts-v0.2.0.tar.gz`](https://github.com/mizorewww/rime-qwen-freq/releases/download/v0.2.0/rime-qwen-dicts-v0.2.0.tar.gz)（或 [`.zip`](https://github.com/mizorewww/rime-qwen-freq/releases/download/v0.2.0/rime-qwen-dicts-v0.2.0.zip)）解压至你的 Rime `dicts/` 目录，在主方案 `.dict.yaml` 的 `import_tables:` 中按需引入并重新部署即可。
+| 文件名 | 词条 / 键数量 | 压缩体积 | 说明 |
+|---|---:|---:|---|
+| `qwen14b-zh-hans.gram.gz` | 1,031,842 | 9.4 MiB | 纯 14B 蒸馏开源 `.gram` 语法模型（解压后 **11.4 MiB**，体积约为 `400.8 MiB` 语料版 `.gram` 的 1/35，零爬虫错别字） |
+| `cs_ai.dict.yaml.gz` | 1,986 | 26 KiB | 精选 + 贝叶斯领域挖掘的 CS / AI / ML / 系统工程术语词表（多音字读音已校对） |
+| `zhwiki.dict.yaml.gz` | 1,464,285 | 17.4 MiB | 中文维基百科（`fcitx5-pinyin-zhwiki`，已与基础词库去重降噪，万象尺度 `1–350,000`） |
+| `zhwiktionary.dict.yaml.gz` | 165,545 | 1.6 MiB | 维基词典（已去重，万象尺度） |
+| `moegirl.dict.yaml.gz` | 105,076 | 1.9 MiB | 萌娘百科（`mw2fcitx`，已去重，万象尺度） |
+| `web_slang.dict.yaml.gz` | 423 | 6.5 KiB | 网络流行语（万象尺度） |
+| `wanxiang_mixed.dict.yaml.gz` | 1,817 | 19 KiB | 中英混输词条（去声调兼容版，已做多音字消歧） |
+| `rime_ice.en.dict.yaml.gz` | 21,263 | 194 KiB | 雾凇英文主词库（ECDICT 尺度 `900,000–999,995`） |
+| `rime_ice.en_ext.dict.yaml.gz` | 2,598 | 29 KiB | 雾凇英文扩展词库（ECDICT 尺度） |
 
-## 为什么不能直接抠 Tokenizer 词表或裸算对数概率？
+## 端到端 `librime` 基准评测
 
-许多第三方导入的 Rime 扩展词库（中文维基百科、维基词典、萌娘百科、网络热词、中英混输补充词表等）要么完全没有第 3 列权重，要么在转换时被一刀切填成固定高数值（例如全部设为 `60000`，高于 99.9% 的日常词），导致敲简拼或短码时被冷门百科词条霸屏。
+在隔离的零用户词典（0-`userdb`）沙箱中运行 `rime-qwen-freq bench`（`bench/bench_cases.tsv`，共 142 条长度 $\le 25$ 键的无截断真实测试：覆盖 CS/AI 连续整句、专业复合词、中英混输、上下文消歧、百科 `60000` 抢权与同音错别字陷阱，以及日常口语防退化护栏集）调用原生 `librime` + `librime-octagram` 实测：
 
-常见的两种捷径在实际使用中都会翻车：
+| 测试环境 | 总体首选率 (Top-1) | 目标集首选率 (`125` 条) | CS 整句 (`40`) | CS 术语 (`35`) | 中英混输 (`20`) | 上下文消歧 (`12`) | 日常护栏 (`17`) | 逐字准确率 | `.gram` 体积 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **原方案基线**（百科 `60000` + 原版 `.gram`） | `38.03%` | `29.60%` | `22.5%` | `40.0%` | `5.0%` | `41.7%` | `100.0%` | `65.38%` | 400.8 MiB |
+| **+ 14B 词表校准与 CS 领域增益** | `88.73%` | `87.20%` | `82.5%` | `100.0%` | `100.0%` | `75.0%` | `100.0%` | `96.28%` | 400.8 MiB |
+| **+ 纯 14B 开源 `.gram`**（`qwen14b-zh-hans`） | `90.85%` | `90.40%` | `85.0%` | `100.0%` | `100.0%` | `83.3%` | `94.1%` | `97.52%` | **11.4 MiB** |
+| **+ 同音错搭清洗 + 14B 融合 `.gram`** | **`92.25%`** | **`91.20%`** | **`95.0%`** | **`100.0%`** | **`100.0%`** | **`83.3%`** | **`100.0%`** | **`97.79%`** | 385.5 MiB |
 
-1. **BPE 词表的合并次序（Merge Rank）不等于词频**：Byte-level BPE 充斥 `"的时"`、`"了一"` 等跨词胶着片段，没有多音字注音，且抹平了齐夫定律（Zipf's law）下的真实频次差距。
-2. **原始对数似然 $\log P(w)$ 存在严重词长偏置且尺度不兼容**：2 字词的联合概率天然远高于 6 字专有名词，且裸概率无法直接与现有词库的语料统计频数混排。
+同时，剔除基础词表重复项与英文零权重废词后，Rime 编译二进制词表（`build/*.bin`）从 **296.0 MiB 降至 170.4 MiB（缩减 42.4%）**。
 
-`rime-qwen-freq` 通过 **精确前缀树（Prefix Trie）双语境前向传播** 提取多维序列特征，并以你本地已有的高质量基础词库作为监督锚点进行 **经验分布回归校准**，一步解决长短词偏置与跨词库尺度对齐问题。
+## 核心原理
 
-## 安装
+### 1. 为什么 Rime 的 `.gram` 应该蒸馏点互信息（PMI），而不是数共现频次？
+在 `librime` 源码（`poet.cc` + `dict_compiler.cc`）中，整句搜索从上文 `context` 走到候选词 `word` 的转移得分是：
 
-需要 **Python 3.10+**。
+$$\text{Score}(\text{context} \to \text{word}) = \ln\big(\text{dict\_weight}(\text{word})\big) + \text{Octagram::Query}(\text{context}, \text{word})$$
 
-### 完整安装（含模型打分与词库管理）
+注意第一项**已经加过一次候选词自身的对数先验 $\ln P(\text{word})$**。要让整条路径得分严格对应真实条件对数概率 $\ln P(\text{word} \mid \text{context})$，语法模型 `Octagram::Query` 真正需要给出的是**点互信息（条件对数增益）**：
 
-适用于配备 **Apple Silicon (`mps`)**、**NVIDIA 显卡 (`cuda`)** 或 CPU 的机器：
+$$\text{PMI}(\text{context}, \text{word}) = \ln P(\text{word} \mid \text{context}) - \ln P(\text{word})$$
+
+传统基于网页语料分词 + KenLM 计数的流程有两个固有缺陷：一是爬虫语料中的高频同音错别字被结巴切碎后在多阶 N-gram 中拿到虚高分数（例如实测原版 `.gram` 中 `再接再励 = 200,616` 反超正字 `再接再厉 = 176,835`，`穿流不息 = 180,687` 而正字 `川流不息 = -1` 漏收，`整行医院 = 231,925`、`强联通分量 = 223,327`）；二是新领域搭配（如 `推测解码`、`缓存命中`）因频次不足被剪枝丢弃。直接从 `Qwen3-14B-Base` 的 `lm_head` 矩阵读取精确条件分布计算 PMI，一次前向即可同时评估数万个单 token 后续词，天然不含错别字噪声。
+
+### 2. 句式匹配的贝叶斯领域对数几率增益（`--domain-prompt`）
+如果直接拼接 `"在计算机科学中"` 计算概率，`"的"`、`"问题"` 等通用虚词也会跟着涨分。我们采用结构对称的双提示词做差：
+
+$$\Delta_{\text{domain}}(w) = \log P(w \mid \text{“计算机科学与人工智能术语：”}) - \log P(w \mid \text{“日常与百科常见词条：”})$$
+
+基础词频严格在通用语境下回归校准以保护日常词序；只有领域富集度显著为正的词条（如 `算子融合 = +7.56`、`前缀树 = +6.12`、`推测解码 = +4.24`）才获得平滑有界的权重加成，而日常词与非本领域词（如 `原神 = -3.50`）增益精确归零。
+
+## 安装与快速上手
 
 ```bash
 git clone https://github.com/mizorewww/rime-qwen-freq.git
 cd rime-qwen-freq
+
+# 完整安装（支持 CUDA / Apple Silicon MPS / CPU 模型打分与蒸馏）：
 pip install -e ".[score]"
-```
 
-若在 Linux + NVIDIA GPU 上运行 `Qwen3.5` 系列模型，可额外安装线性注意力融合算子加速包：
-
-```bash
-pip install -e ".[score,cuda-kernels]"
-```
-
-### 轻量客户端安装（零第三方依赖）
-
-`inspect`、`extract`、`apply` 三个子命令**仅使用 Python 标准库**（内置纯标准库 `.npy` 解析器）。如果你在轻薄本上提取/回写词库、在另一台 GPU 机器上跑 `score`，轻薄本无需安装 PyTorch 或 NumPy：
-
-```bash
+# 轻量客户端安装（仅依赖 Python 标准库，用于 inspect / extract / apply / bench）：
 pip install --no-deps -e .
+
+# 编译独立 C++ .gram 构建与清洗合并工具：
+c++ -O3 -std=c++17 tools/gram_tool.cc -o gram_tool
 ```
 
-## 使用方法
-
-### 1. 诊断本地 Rime 词库（`inspect`）
-
-自动识别 macOS 鼠须管（`~/Library/Rime`）、Linux Fcitx5 / IBus（`~/.local/share/fcitx5/rime`、`~/.config/ibus/rime`）及 Windows 小狼毫（`%APPDATA%\Rime`），输出所有词典的权重分布与自动判定角色：
+### 常用命令
 
 ```bash
+# 1. 扫描诊断本地 Rime 词库
 rime-qwen-freq inspect
-```
 
-示例输出：
-
-```text
-Rime directory: /Users/alice/Library/Rime
-
-Dictionary                           Lang    Entries    UniqW      P50       P99  Role            Diagnostic
-------------------------------------------------------------------------------------------------------------------------------------
-dicts/wanxiang_jichu.dict.yaml       zh    1,493,800   11,352      279     5,256  anchor          11,352 distinct empirical weights
-dicts/zhwiki.dict.yaml               zh    1,728,419        1   60,000    60,000  needs-weights   100.0% constant weight (60000)
-dicts/moegirl.dict.yaml              zh      129,813        1   60,000    60,000  needs-weights   100.0% constant weight (60000)
-dicts/wanxiang_mixed.dict.yaml       zh        1,817        0        0         0  needs-weights   100% missing weights
-dicts/rime_ice.others.dict.yaml      zh          584        0        0         0  skip-special    typo/aux/shape dictionary
-dicts/easy_en.dict.yaml              en      745,397   40,770  973,299   998,120  anchor          40,770 distinct empirical weights
-dicts/rime_ice.en.dict.yaml          en       21,263        0        0         0  needs-weights   100% missing weights
-```
-
-*(注：错音纠错表 `*others*`、符号/Emoji、五笔/笔画/拆字反查表会被自动标记为 `skip-special` 跳过，防止错音压过正音。)*
-
-### 2. 本机一键生成并部署（`run`）
-
-如果本机自带 Apple Silicon (`mps`) 或 NVIDIA GPU (`cuda`)，一条命令即可完成提取、打分、备份原词典（默认存于 `./backup_dicts`）、原子回写并重新编译重载 Rime：
-
-```bash
-rime-qwen-freq run --deploy
-```
-
-也可以手动指定目标词典或切换任意 Hugging Face 基座模型：
-
-```bash
-rime-qwen-freq run \
-  --targets dicts/zhwiki.dict.yaml dicts/wanxiang_mixed.dict.yaml \
-  --model Qwen/Qwen3-0.6B-Base \
-  --deploy
-```
-
-### 3. 跨机器分步工作流（`extract` → `score` → `apply`）
-
-当 Rime 安装在无独立显卡的轻薄本上，而你想把计算放到远程 GPU 工作站或服务器执行时：
-
-```bash
-# 第一步（本地机器，零依赖）：抽取去重待打分词表 + 分层锚点
+# 2. 跨机器分步生成带 CS/AI 领域增强的词频
 rime-qwen-freq extract -o payload.json.gz
-
-# 第二步（GPU 机器）：运行前缀树双语境打分与分布校准
-rime-qwen-freq score -i payload.json.gz -o scores.tar.gz --model Qwen/Qwen3.5-0.8B-Base
-
-# 第三步（本地机器，零依赖）：自动备份原词库、原子替换权重并触发 Rime 重新部署
+rime-qwen-freq score -i payload.json.gz -o scores.tar.gz \
+  --model Qwen/Qwen3-14B-Base \
+  --domain-prompt "计算机科学与人工智能术语：" \
+  --general-prompt "日常与百科常见词条："
 rime-qwen-freq apply -p payload.json.gz -s scores.tar.gz --deploy
+
+# 3. 直接从语言模型蒸馏 PMI 语法模型 (.gram)
+rime-qwen-freq distill-ngram -o distilled_ngrams.tsv.gz --model Qwen/Qwen3-14B-Base
+gunzip -k distilled_ngrams.tsv.gz
+./gram_tool build distilled_ngrams.tsv qwen14b-zh-hans.gram
+
+# 4. 运行原生 librime 端到端基准测试
+rime-qwen-freq bench --rime-dir ~/Library/Rime --schema rime_mint
 ```
 
-## 工作原理与实测指标
-
-1. **BPE 精确前缀树（Prefix Trie）去重加速**：将百万级词条的所有真前缀合并为一棵前缀树，共享前缀在 Transformer 主干上**仅计算一次**，并在设备端直接完成稀疏索引收集（避免将 `[batch, vocab_size]` 大张量拷回内存）；每次运行前自动与完整序列 `log_softmax` 做数值等价校验。
-2. **双语境特征提取**：同时在句首语境（`"。\n"` / `".\n"`）与实体提及语境（`"提到"` / `"The "`）下提取总对数似然、首尾转移概率、最弱 token 概率（自动惩罚残缺词条）及 BPE 合并秩特征。
-3. **经验锚点回归与方差还原**：使用主力词库分层抽样的真实权重训练正则化梯度提升树（`HistGradientBoostingRegressor`），并通过方差还原拉伸恢复齐夫长尾分布，自动兼容对数频数尺度（万象/雾凇）与线性秩尺度（ECDICT `easy_en`）。
-
-在 216.5 万去重词条上的实测结果（`Qwen/Qwen3.5-0.8B-Base`，15,001 条万象留出验证集）：**$R^2 = 0.637$**，**Spearman 秩相关系数 $\rho = 0.735$**。
-
-| 词条 | 来源词典 | 修复前权重 | 校准后权重 | 万象参考真值 |
-|---|---|---:|---:|---:|
-| `深度学习` | 留出集验证 | — | `14,714` | `15,502` |
-| `原神` | 留出集验证 | — | `13,914` | `12,425` |
-| `3D` / `5G` | `wanxiang_mixed` | *(缺失)* | `4,338` / `2,301` | — |
-| `B站` / `A股` | `web_slang` / `zhwiktionary` | `60,000` | `2,053` / `840` | — |
-| `女奴` | `moegirl` | `60,000` | `374` | `455` |
-| `三角力量` / `滨边美波` | `moegirl` | `60,000` | `106` / `52` | — |
-| `-真天地开辟集团-慈愚挫愚` | `zhwiki` | `60,000` | `3` | — |
-
-## 开发与测试
-
-运行内置单元测试（覆盖词库自动分类、锚点抽样、原子回写与标准库 `.npy` 读取器）：
+## 测试与协议
 
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 
-## 贡献与开源协议
-
-欢迎提交 Issue 与 Pull Request。涉及特征提取或校准目标函数的改动，请附上留出锚点验证集前后的 Spearman $\rho$ 对比数据。
-
-本项目基于 [MIT License](LICENSE) 开源。
+本项目采用 [MIT License](LICENSE) 开源（`tools/darts.h` 为 Susumu Yata 开发的 BSD 协议 Darts-clone v0.32）。
