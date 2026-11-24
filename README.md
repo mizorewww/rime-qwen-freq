@@ -1,79 +1,158 @@
 # rime-qwen-freq
 
-用 **Qwen3.5-0.8B-Base** 在离线 GPU 上为缺失真实词频（或被填充统一假常数权重）的 **Rime 输入法词库** 生成对齐万象（Wanxiang）/ ECDICT 尺度的静态词频权重，**打字运行时零推理开销**。
+**Distill calibrated static word frequencies for Rime input method dictionaries from open-weight language models.**
 
-## 解决什么痛点？
+[![License: MIT](https://img.shields.io/github/license/mizorewww/rime-qwen-freq)](LICENSE)
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
+![macOS · Linux · Windows](https://img.shields.io/badge/rime-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-informational)
 
-很多第三方扩展词库（如维基百科 `zhwiki`、维基词典 `zhwiktionary`、萌娘百科 `moegirl`、网络流行语 `web_slang`、中英混输 `wanxiang_mixed`、雾凇英文 `rime_ice.en`）要么**完全缺失词频列**，要么在转换时被一刀切填成固定高权重（如统一 `60000`，高于 99.9% 的日常词条），导致输入法简拼/短码首选被生僻百科词霸占。
+**English** · [简体中文](README.zh-CN.md)
 
-为什么不能直接抠大模型的 `tokenizer.json` 当词频？
-1. **BPE 词表只有合并次序（Merge Rank），没有线性词频**，且充斥 `"的时"`、`"了一"` 等跨词边界碎片；
-2. **原始对数似然 $\log P(w)$ 有严重的词长偏置**（2 字词概率天然远高于 6 字专有名词），且数值无法直接与现有主力词库（如 `wanxiang_jichu`）融合。
+`rime-qwen-freq` audits a [Rime](https://rime.im/) configuration directory, finds `.dict.yaml` dictionaries that have missing or constant placeholder weights, scores their entries offline with a causal language model (`Qwen/Qwen3.5-0.8B-Base` by default), and calibrates the predicted weights onto the exact empirical scale of your existing base dictionary (`rime-ice`, `rime-wanxiang`, `rime-mint`, `luna_pinyin`, or `easy_en`).
 
-## 核心方法
+All computation happens offline. Rime continues to use native `.table.bin` lookup at runtime with **zero inference latency**.
 
-```
-本地 Rime 词库 ──▶ [1. prepare_payload.py] 抽取待打分去重词表 + 10万万象/Easy-En真实词频锚点
-                                │
-                                ▼
-                   [2. gpu_score.py (CUDA)] Qwen/Qwen3.5-0.8B-Base
-                     ├─ 构建 BPE 精确前缀树（Prefix Trie），共享前缀仅前向计算一次
-                     ├─ 双语境 Teacher-Forcing（句首 "。\n" + 实体提及 "提到"）提取序列概率特征
-                     └─ HistGradientBoostingRegressor 拟合锚点对数词频 + 方差还原校准
-                                │
-                                ▼
-本地 Rime 词库 ◀── [3. apply_scores.py] 零外部依赖读取 .npy，自动备份原词典、原子替换并触发 Squirrel 热重载
-```
+## Why not read BPE ranks or raw log-probabilities?
 
-### 实测校准效果（NVIDIA L4, 216.5 万去重词条）
+Third-party Rime extension dictionaries (Wikipedia titles, Wiktionary, ACG/fandom lexicons, slang lists, bilingual supplements) frequently omit the weight column or assign a flat placeholder constant (such as `60000` on every row), causing obscure multi-word stubs to outrank everyday words on short Pinyin prefixes.
 
-在 15,001 条从未参与训练的万象留出验证集上：
-- **$R^2 = 0.637$**，**Spearman 秩相关系数 $\rho = 0.735$**（对数词频 MAE `0.465`）
+Two common shortcuts fail in practice:
 
-| 词条 | 来源词库 | 原权重 | Qwen3.5-0.8B 校准权重 | 万象参考真值 |
-| :--- | :--- | ---: | ---: | ---: |
-| `深度学习` | 锚点验证 | - | `14,714` | `15,502` |
-| `原神` | 锚点验证 | - | `13,914` | `12,425` |
-| `3D` / `5G` | `wanxiang_mixed` | *(无权重)* | `4,338` / `2,301` | - |
-| `B站` / `A股` | `web_slang` / `zhwiktionary` | `60,000` | `2,053` / `840` | - |
-| `女奴` | `moegirl` | `60,000` | `374` | `455` |
-| `三角力量` / `滨边美波` | `moegirl` | `60,000` | `106` / `52` | - |
-| `-真天地开辟集团-慈愚挫愚` | `zhwiki` | `60,000` | `3` | - |
+1. **Tokenizer BPE merge ranks are not word frequencies.** Byte-level BPE vocabularies contain non-lexical glue fragments (`"的时"`, `"了一"`), omit pronunciation disambiguation, and flatten Zipfian frequency gaps into linear merge indices.
+2. **Raw sequence log-likelihood $\log P(w)$ is length-biased and uncalibrated.** A 2-character word naturally has a much higher joint probability than a 6-character proper noun, and raw log-probabilities cannot be merged directly with corpus-counted weights in an existing Rime schema.
 
-## 快速开始
+`rime-qwen-freq` solves both by combining **exact Prefix-Trie teacher-forcing** across complementary contexts with **empirical anchor regression** trained directly on the weighted base dictionaries already present in your Rime folder.
 
-### 1. 本地打包待打分词表与校准锚点
+## Installation
 
-默认自动识别 macOS `~/Library/Rime` 或 Linux `~/.local/share/fcitx5/rime`：
+Requires **Python 3.10+**.
+
+### Full installation (scoring + dictionary management)
+
+Install in a virtual environment on any machine with **Apple Silicon (`mps`)**, an **NVIDIA GPU (`cuda`)**, or CPU:
 
 ```bash
-python3 scripts/prepare_payload.py \
-  --rime-dir ~/Library/Rime \
-  --output out/payload.json.gz
+git clone https://github.com/mizorewww/rime-qwen-freq.git
+cd rime-qwen-freq
+pip install -e ".[score]"
 ```
 
-### 2. 在 CUDA GPU（如 Google Colab L4 / A100）上计算校准词频
+On Linux with an NVIDIA GPU, optional fused linear-attention kernels for `Qwen3.5` can be installed via:
 
 ```bash
-pip install -r requirements-gpu.txt
-
-python3 scripts/gpu_score.py \
-  --payload out/payload.json.gz \
-  --output out/rime_scores.tar.gz \
-  --model Qwen/Qwen3.5-0.8B-Base
+pip install -e ".[score,cuda-kernels]"
 ```
 
-### 3. 本地备份、回写词典并热重载 Rime（仅依赖 Python 标准库）
+### Lightweight client installation (stdlib only)
+
+The `inspect`, `extract`, and `apply` subcommands use **only the Python standard library** (including a pure-stdlib `.npy` reader). If you extract words on a lightweight laptop and run `score` on a separate GPU box, the laptop needs no third-party packages:
 
 ```bash
-python3 scripts/apply_scores.py \
-  --rime-dir ~/Library/Rime \
-  --payload out/payload.json.gz \
-  --scores out/rime_scores.tar.gz \
-  --backup-dir out/backup_dicts \
+pip install --no-deps -e .
+```
+
+## Usage
+
+### 1. Audit your Rime dictionaries
+
+Scan your Rime user directory (`~/Library/Rime` on macOS, `~/.local/share/fcitx5/rime` or `~/.config/ibus/rime` on Linux, `%APPDATA%\Rime` on Windows) to see which tables have real empirical distributions (`anchor`), which lack real weights (`needs-weights`), and which auxiliary typo/symbol tables are intentionally skipped (`skip-special`):
+
+```bash
+rime-qwen-freq inspect
+```
+
+Example output:
+
+```text
+Rime directory: /Users/alice/Library/Rime
+
+Dictionary                           Lang    Entries    UniqW      P50       P99  Role            Diagnostic
+------------------------------------------------------------------------------------------------------------------------------------
+dicts/wanxiang_jichu.dict.yaml       zh    1,493,800   11,352      279     5,256  anchor          11,352 distinct empirical weights
+dicts/zhwiki.dict.yaml               zh    1,728,419        1   60,000    60,000  needs-weights   100.0% constant weight (60000)
+dicts/moegirl.dict.yaml              zh      129,813        1   60,000    60,000  needs-weights   100.0% constant weight (60000)
+dicts/wanxiang_mixed.dict.yaml       zh        1,817        0        0         0  needs-weights   100% missing weights
+dicts/rime_ice.others.dict.yaml      zh          584        0        0         0  skip-special    typo/aux/shape dictionary
+dicts/easy_en.dict.yaml              en      745,397   40,770  973,299   998,120  anchor          40,770 distinct empirical weights
+dicts/rime_ice.en.dict.yaml          en       21,263        0        0         0  needs-weights   100% missing weights
+```
+
+### 2. One-shot local pipeline (`run`)
+
+If your machine has Apple Silicon (`mps`) or an NVIDIA GPU (`cuda`), run extraction, scoring, atomic dictionary update (with automatic backups in `./backup_dicts`), and Rime redeployment in a single command:
+
+```bash
+rime-qwen-freq run --deploy
+```
+
+To score only specific dictionaries or use another Hugging Face CausalLM checkpoint:
+
+```bash
+rime-qwen-freq run \
+  --targets dicts/zhwiki.dict.yaml dicts/wanxiang_mixed.dict.yaml \
+  --model Qwen/Qwen3-0.6B-Base \
   --deploy
 ```
 
+### 3. Split workflow across two machines (`extract` → `score` → `apply`)
+
+When your Rime setup lives on a thin laptop and you want to run scoring on a separate GPU workstation or server:
+
+```bash
+# Step A (on laptop, stdlib only): package target words + stratified anchor sample
+rime-qwen-freq extract -o payload.json.gz
+
+# Step B (on GPU machine): run Prefix-Trie scoring & calibration
+rime-qwen-freq score -i payload.json.gz -o scores.tar.gz --model Qwen/Qwen3.5-0.8B-Base
+
+# Step C (on laptop, stdlib only): back up originals, write weights atomically, and reload Rime
+rime-qwen-freq apply -p payload.json.gz -s scores.tar.gz --deploy
+```
+
+## How It Works
+
+1. **Prefix-Trie Exact Teacher-Forcing:** All target words and anchor words are tokenized into BPE sequences and inserted into a proper-prefix Trie. Shared prefixes are evaluated by the transformer backbone **only once**, and a sparse on-device gather extracts only the required child token log-probabilities (avoiding multi-gigabyte `[batch, vocab_size]` host transfers). A built-in numerical equivalence check verifies exactness against full-sequence `log_softmax` before each run.
+2. **Dual-Context Feature Extraction:** Each entry is scored under two complementary contexts — clause-initial (`"。\n"` / `".\n"`) for general vocabulary and mention-context (`"提到"` / `"The "`) for named entities, technical terms, and mixed CJK-ASCII tokens — extracting total log-probability, entry/exit transitions, weakest-link token log-probability (which penalizes malformed encyclopedia titles), token count, character length, and BPE rank features.
+3. **Empirical Anchor Calibration:** Stratified ground-truth anchors sampled from your existing base dictionaries train a regularized `HistGradientBoostingRegressor` in $\log_{10}(w + 1)$ space (or linear rank space for ECDICT-style tables), followed by a variance-preserving stretch so high-frequency words and rare long-tail entries match your schema's native Zipfian distribution.
+
+### Sample Calibration Results (`Qwen/Qwen3.5-0.8B-Base`, 2.16M unique entries)
+
+Evaluated on 15,001 held-out ground-truth entries from `wanxiang_jichu`: **$R^2 = 0.637$**, **Spearman $\rho = 0.735$** ($\text{MAE}_{\log_{10}} = 0.465$).
+
+| Entry | Source Dictionary | Previous Weight | Calibrated Weight | Reference Ground Truth |
+|---|---|---:|---:|---:|
+| `深度学习` | Held-out validation | — | `14,714` | `15,502` |
+| `原神` | Held-out validation | — | `13,914` | `12,425` |
+| `3D` / `5G` | `wanxiang_mixed` | *(missing)* | `4,338` / `2,301` | — |
+| `B站` / `A股` | `web_slang` / `zhwiktionary` | `60,000` | `2,053` / `840` | — |
+| `女奴` | `moegirl` | `60,000` | `374` | `455` |
+| `三角力量` / `滨边美波` | `moegirl` | `60,000` | `106` / `52` | — |
+| `-真天地开辟集团-慈愚挫愚` | `zhwiki` | `60,000` | `3` | — |
+
+## CLI Reference
+
+| Command | Dependencies | Purpose |
+|---|---|---|
+| `rime-qwen-freq inspect` | Python stdlib | Audit `.dict.yaml` weight distributions and auto-detected roles (`--json` supported) |
+| `rime-qwen-freq run` | `[score]` | End-to-end local extract, score, backup, atomic rewrite, and optional `--deploy` |
+| `rime-qwen-freq extract` | Python stdlib | Export deduplicated target words and stratified anchors to `.json.gz` |
+| `rime-qwen-freq score` | `[score]` | Score a `.json.gz` bundle on `cuda`, `mps`, or `cpu` and emit `.tar.gz` weights + metrics |
+| `rime-qwen-freq apply` | Python stdlib | Back up original `.dict.yaml` files, apply `.tar.gz` weights atomically, and `--deploy` |
+
+`--deploy` automatically invokes Squirrel (`rime_deployer` + `Squirrel --reload`) on macOS, `rime_deployer` + `fcitx5-remote -r` / `ibus restart` on Linux, and `WeaselDeployer.exe /deploy` on Windows.
+
+## Development & Testing
+
+Run the unit test suite (covers dictionary classification, extraction, atomic rewriting, and the pure-stdlib `.npy` parser):
+
+```bash
+PYTHONPATH=src python3 -m unittest discover -s tests -v
+```
+
+## Contributing
+
+Issues and pull requests are welcome. For major changes to the feature extractor or calibration objective, please open an issue first with before/after Spearman $\rho$ metrics on a held-out anchor split.
+
 ## License
 
-MIT
+[MIT](LICENSE)
