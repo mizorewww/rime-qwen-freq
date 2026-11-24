@@ -2,15 +2,32 @@
 
 **Distill calibrated static word frequencies for Rime input method dictionaries from open-weight language models.**
 
+[![Newest release](https://img.shields.io/github/v/release/mizorewww/rime-qwen-freq?sort=semver&label=release)](https://github.com/mizorewww/rime-qwen-freq/releases)
 [![License: MIT](https://img.shields.io/github/license/mizorewww/rime-qwen-freq)](LICENSE)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
 ![macOS · Linux · Windows](https://img.shields.io/badge/rime-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-informational)
 
-**English** · [简体中文](README.zh-CN.md)
+**English** · [简体中文](README.zh-CN.md) · [Pre-built Dictionaries](#pre-built-dictionaries)
 
 `rime-qwen-freq` audits a [Rime](https://rime.im/) configuration directory, finds `.dict.yaml` dictionaries that have missing or constant placeholder weights, scores their entries offline with a causal language model (`Qwen/Qwen3.5-0.8B-Base` by default), and calibrates the predicted weights onto the exact empirical scale of your existing base dictionary (`rime-ice`, `rime-wanxiang`, `rime-mint`, `luna_pinyin`, or `easy_en`).
 
 All computation happens offline. Rime continues to use native `.table.bin` lookup at runtime with **zero inference latency**.
+
+## Pre-built Dictionaries
+
+Ready-to-use `.dict.yaml` tables pre-scored with `Qwen/Qwen3.5-0.8B-Base` and calibrated to the **Wanxiang (`wanxiang_jichu`)** / **ECDICT (`easy_en`)** scales (2,170,186 entries total) are available on the [Releases](https://github.com/mizorewww/rime-qwen-freq/releases/latest) page — no Python or GPU setup required:
+
+| Dictionary | Entries | Upstream Source | Scale |
+|---|---:|---|---|
+| `zhwiki.dict.yaml` | 1,728,419 | Chinese Wikipedia (`fcitx5-pinyin-zhwiki`) | Wanxiang (`1` – `300,000`) |
+| `zhwiktionary.dict.yaml` | 285,853 | Chinese Wiktionary (`fcitx5-pinyin-zhwiki`) | Wanxiang (`1` – `300,000`) |
+| `moegirl.dict.yaml` | 129,813 | Moegirlpedia (`mw2fcitx`) | Wanxiang (`1` – `300,000`) |
+| `web_slang.dict.yaml` | 423 | Web slang (`fcitx5-pinyin-zhwiki`) | Wanxiang (`1` – `300,000`) |
+| `wanxiang_mixed.dict.yaml` | 1,817 | CJK-Latin mixed terms (`rime-wanxiang` toneless) | Wanxiang (`1` – `300,000`) |
+| `rime_ice.en.dict.yaml` | 21,263 | Core English vocabulary (`rime-ice`) | ECDICT (`900,000` – `999,995`) |
+| `rime_ice.en_ext.dict.yaml` | 2,598 | Extended English & tech terms (`rime-ice`) | ECDICT (`900,000` – `999,995`) |
+
+Download [`rime-qwen-dicts-v0.2.0.tar.gz`](https://github.com/mizorewww/rime-qwen-freq/releases/download/v0.2.0/rime-qwen-dicts-v0.2.0.tar.gz) (or [`.zip`](https://github.com/mizorewww/rime-qwen-freq/releases/download/v0.2.0/rime-qwen-dicts-v0.2.0.zip)), extract into your Rime `dicts/` directory, reference the desired tables under `import_tables:` in your `.dict.yaml`, and redeploy Rime.
 
 ## Why not read BPE ranks or raw log-probabilities?
 

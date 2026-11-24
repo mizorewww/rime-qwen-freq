@@ -2,15 +2,32 @@
 
 **利用开源因果语言模型，为 Rime（中州韵）输入法词库离线蒸馏并校准静态词频权重。**
 
+[![Newest release](https://img.shields.io/github/v/release/mizorewww/rime-qwen-freq?sort=semver&label=release)](https://github.com/mizorewww/rime-qwen-freq/releases)
 [![License: MIT](https://img.shields.io/github/license/mizorewww/rime-qwen-freq)](LICENSE)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
 ![macOS · Linux · Windows](https://img.shields.io/badge/rime-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-informational)
 
-[English](README.md) · **简体中文**
+[English](README.md) · **简体中文** · [预构建词表下载](#预构建词表下载)
 
 `rime-qwen-freq` 会自动扫描你的 [Rime](https://rime.im/) 配置目录，识别**缺失词频列**或**被统一填充假常数权重**的 `.dict.yaml` 扩展词库，在离线环境下利用开源语言模型（默认 `Qwen/Qwen3.5-0.8B-Base`，支持任意 Hugging Face `CausalLM`）提取序列概率特征，并将其精准校准到你现有主力词库（如雾凇拼音 `rime-ice`、万象拼音 `rime-wanxiang`、薄荷拼音 `rime-mint`、朙月拼音或 `easy_en`）的真实词频尺度上。
 
 所有模型计算均在**离线阶段一次性完成**；打字运行时依然使用 Rime 原生 `.table.bin` 查表，**零推理延迟、零后台常驻进程**。
+
+## 预构建词表下载
+
+如果你不想自己跑模型，可以直接在 [Releases](https://github.com/mizorewww/rime-qwen-freq/releases/latest) 页面下载已经用 `Qwen/Qwen3.5-0.8B-Base` 跑完并对齐**万象（`wanxiang_jichu`）/ ECDICT（`easy_en`）尺度**的成品 `.dict.yaml` 词库（合计 **2,170,186 条**）：
+
+| 词典文件 | 词条数 | 上游词条来源 | 校准词频尺度 |
+|---|---:|---|---|
+| `zhwiki.dict.yaml` | 1,728,419 | 中文维基百科（`fcitx5-pinyin-zhwiki`） | 万象尺度（`1` – `300,000`） |
+| `zhwiktionary.dict.yaml` | 285,853 | 维基词典（`fcitx5-pinyin-zhwiki`） | 万象尺度（`1` – `300,000`） |
+| `moegirl.dict.yaml` | 129,813 | 萌娘百科（`mw2fcitx`） | 万象尺度（`1` – `300,000`） |
+| `web_slang.dict.yaml` | 423 | 网络流行语（`fcitx5-pinyin-zhwiki`） | 万象尺度（`1` – `300,000`） |
+| `wanxiang_mixed.dict.yaml` | 1,817 | 中英混输词条（`rime-wanxiang` 去声调兼容版） | 万象尺度（`1` – `300,000`） |
+| `rime_ice.en.dict.yaml` | 21,263 | 雾凇拼音英文主词库（`rime-ice`） | ECDICT 尺度（`900,000` – `999,995`） |
+| `rime_ice.en_ext.dict.yaml` | 2,598 | 雾凇拼音英文扩展词库（`rime-ice`） | ECDICT 尺度（`900,000` – `999,995`） |
+
+下载 [`rime-qwen-dicts-v0.2.0.tar.gz`](https://github.com/mizorewww/rime-qwen-freq/releases/download/v0.2.0/rime-qwen-dicts-v0.2.0.tar.gz)（或 [`.zip`](https://github.com/mizorewww/rime-qwen-freq/releases/download/v0.2.0/rime-qwen-dicts-v0.2.0.zip)）解压至你的 Rime `dicts/` 目录，在主方案 `.dict.yaml` 的 `import_tables:` 中按需引入并重新部署即可。
 
 ## 为什么不能直接抠 Tokenizer 词表或裸算对数概率？
 
