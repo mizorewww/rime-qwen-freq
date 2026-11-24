@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.DS_Store
+*.gz
+*.npy
+*.bin
+backup_dicts/
+extracted_scores/
+out/
