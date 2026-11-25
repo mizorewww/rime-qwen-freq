@@ -12,7 +12,7 @@ Download ready-to-use `.dict.yaml.gz` tables (`cs_ai`, `zhwiki`, `zhwiktionary`,
 
 | Setup | Top-1 | CS Clauses (`40`) | CS Terms (`35`) | CharAcc | `.gram` |
 |---|---:|---:|---:|---:|---:|
-| Baseline (`60000` wiki + stock `.gram`) | `38.03%` | `22.5%` | `40.0%` | `65.38%` | 400.8 MiB |
+| Baseline (uncalibrated dicts + stock `.gram`) | `38.03%` | `22.5%` | `40.0%` | `65.38%` | 400.8 MiB |
 | + 14B Dicts & CS Lift | `88.73%` | `82.5%` | `100.0%` | `96.28%` | 400.8 MiB |
 | + Pure 14B `.gram` (`qwen14b-zh-hans`) | `90.85%` | `85.0%` | `100.0%` | `97.52%` | **11.4 MiB** |
 | + Hybrid Cleaned + 14B `.gram` | **`92.25%`** | **`95.0%`** | **`100.0%`** | **`97.79%`** | 385.5 MiB |
